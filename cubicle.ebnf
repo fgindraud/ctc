@@ -1,0 +1,86 @@
+
+# TODO @@comments :: 
+
+model =
+	[size_proc:size_proc]
+	types:type_def_list
+	decls:declaration_list
+	init:init
+	invariants:invariant_list
+	unsafes:unsafe_list
+	transitions:transition_list
+	$
+	;
+
+# size procs
+size_proc = 'number_procs' ~ int ;
+
+# types
+type_def_list = {type_def} ; 
+type_def = 'type' ~ name:lowercase_name ['=' ['|'] enum:type_enum] ;
+type_enum = @+:uppercase_name {'|' @+:uppercase_name} ;
+
+# declarations (TODO templatize names)
+declaration_list = {const_decl | var_decl | array_decl} ;
+const_decl = kind:'const' ~ name:uppercase_name ':' typename:lowercase_name ;
+var_decl = kind:'var' ~ name:uppercase_name ':' typename:lowercase_name ;
+array_decl = kind:'array' ~ name:uppercase_name '[' index:lowercase_name_comma_list ']' ':' typename:lowercase_name ;
+
+# init
+init = 'init' '(' procs:lowercase_name_space_list ')' '{' expr:or_expr '}' ;
+
+# invariants
+invariant_list = {invariant} ;
+invariant = 'invariant' ~ '(' procs:lowercase_name_space_list ')' '{' expr:or_expr '}' ;
+
+# unsafe (TODO templatize ?)
+unsafe_list = {unsafe}+ ;
+unsafe = 'unsafe' ~ '(' procs:lowercase_name_space_list ')' '{' expr:or_expr '}' ;
+
+# transition (TODO templatize)
+transition_list = {transition} ;
+transition =
+	'transition' ~ name:any_name '(' procs:lowercase_name_space_list ')'
+	[require:transition_require]
+	updates:transition_body
+	;
+transition_require = 'requires' ~ '{' @:f_or_expr '}' ;
+transition_body = '{' ~ {@+:transition_stmt ';'} [@+:transition_stmt [';']] '}' ;
+transition_stmt = lvalue ':=' affect_rvalue ;
+affect_rvalue = switch_case | expr | '.' | '?' ;
+switch_case = 'case' ~ {case}+ ;
+case = '|' ~ name:('_' ~ | and_expr) ':' value:expr ;
+
+# expressions (f_ versions permits forall_other) (TODO templatized ops like &&<T>)
+f_or_expr = @+:f_and_expr {'||' ~ @+:f_and_expr} ;
+f_and_expr = @+:f_comp_expr {'&&' ~ @+:f_comp_expr} ;
+f_comp_expr = comp_expr | forall_other ;
+forall_other = 'forall_other' ~ lowercase_name '.' forall_other_expr ;
+forall_other_expr =  comp_expr | '(' or_expr ')' ;
+
+or_expr = @+:and_expr {'||' @+:and_expr} ;
+and_expr = @+:comp_expr {'&&' @+:comp_expr} ;
+comp_expr = expr ('=' | '<>' | '<=' | '<') expr ;
+expr = rvalue ('+' | '-') rvalue | rvalue ;
+rvalue = lvalue | int | bool ;
+lvalue = array_ref | var_ref ;
+
+
+array_ref = name:uppercase_name '[' ~ index:any_name_comma_list ']' ;
+var_ref = name:any_name ;
+
+# templates
+
+
+# combinations
+lowercase_name_comma_list = @+:lowercase_name {',' @+:lowercase_name} ;
+lowercase_name_space_list = {lowercase_name} ;
+any_name = lowercase_name | uppercase_name ;
+any_name_comma_list = @+:any_name {',' @+:any_name} ;
+
+# basic
+lowercase_name = /[a-z][a-zA-Z0-9_]*/ ;
+uppercase_name = /[A-Z][a-zA-Z0-9_]*/ ;
+int = /\d+/ ;
+bool = 'True' | 'False' ;
+
