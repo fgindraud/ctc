@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 import sys
+import grako.buffering
+import grako.exceptions
 
 # Generate the parser if not found
 try:
@@ -10,15 +12,26 @@ except ImportError:
     os.system ("python -m grako -m Cubicle -o cubicle_parser.py cubicle.ebnf")
     import cubicle_parser
 
-class CubicleBuffer:
-    # to remove recursive comments, TODO
-    def eat_comments ():
-        pass
+class CubicleCommentBuffer (grako.buffering.Buffer):
+    """ Handles removing the caml-style recursive comments in cubicle """
+    def eat_comments (self):
+        if self.match ("(*"):
+            level = 1
+            while level > 0:
+                matched = self._scanre ("[^(*]*(\(\*|\*\))") # match next '(*' or '*)'
+                if not matched:
+                    raise grako.exceptions.ParseError ("Unmatched comment at {}".format (self.line_info ()))
+                if matched.group (1) == "(*":
+                    level += 1
+                if matched.group (1) == "*)":
+                    level -= 1
+                self.move (len (matched.group (0)))
 
 class TemplateEngine:
     def __init__ (self, cin):
         parser = cubicle_parser.CubicleParser ()
-        self.ast = parser.parse (cin.read (), "model")
+        buf = CubicleCommentBuffer (cin.read ())
+        self.ast = parser.parse (buf, "model")
 
     def run (self, cout, data):
         self.output_ast (cout, self.substitute (data))
