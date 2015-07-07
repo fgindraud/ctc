@@ -2,6 +2,7 @@
 
 import sys
 import itertools
+import collections
 
 try:
     import grako.buffering
@@ -38,17 +39,14 @@ class CubicleCommentBuffer (grako.buffering.Buffer):
                 self.move (len (matched.group (0)))
 
 class TemplateEngine:
-
+    """ Main template class. init with template, and run with data and output stream """ 
     def __init__ (self, cin):
         parser = cubicle_parser.CubicleParser (parseinfo = True)
         buf = CubicleCommentBuffer (cin.read ())
         self.ast = parser.parse (buf, "model")
 
     def run (self, cout, data):
-        t = self.substitute (data)
-        import json
-        print (json.dumps (t, indent=2))
-        self.output_ast (cout, t)
+        self.output_ast (cout, self.substitute (data))
 
     def substitute (self, data):
         """ Generate a new ast with substituted templates """
@@ -66,33 +64,74 @@ class TemplateEngine:
                 new[field] = func (node[field], instance)
             return grako.ast.AST (new)
 
-        # Template substitution 
-        def template_instances (node):
-            try:
-                template_params = [] if node.template is None else node.template
-                return itertools.product (*(data[p] for p in template_params))
-            except KeyError as e:
-                raise TemplateError ("line {}: template parameter {} not found in data".format (line (node), e))
+        # Template substitution
+        def expand_template (t, instance, in_substitution = False):
+            if t.arg is not None:
+                if in_substitution:
+                    raise TemplateError ("introducing new arg in substitution: {}".format (t.arg))
+                try:
+                    instances = data[t.arg]
+                except TypeError:
+                    raise TemplateError ("input data must be a map of list/maps")
+                except KeyError:
+                    raise TemplateError ("template arg not found in input data: {}".format (t.arg))
+                
+                # get the set of instances, normalize it to a list of dicts with _instance fields to store the instance name
+                def normalize (instance_name, instance_dict = {}):
+                    new = dict (instance_dict)
+                    new["_instance"] = instance_name
+                    return new
+                if isinstance (instances, collections.Mapping):
+                    return [normalize (i, d) for i, d in instances.items ()]
+                elif isinstance (instances, collections.Iterable):
+                    return [normalize (i) for i in instances]
+                else:
+                    raise TemplateError ("input data for template param {} is not a map or iterable".format (t.arg))
 
-        def gen_name (template, instance):
-            fmt = "{}".join (template[0::2]) # get name_parts and insert format tokens
+            def get_ref (instance_index, field_name = "_instance"):
+                try:
+                    n = int (instance_index)
+                    return instance[n][field_name] # normalized above
+                except IndexError:
+                    raise TemplateError ("substitution index {} undefined (defined = [0,{}[)".format (instance_index, len (instance)))
+                except KeyError:
+                    raise TemplateError ("field {} not found in instance {}".format (field_name, instance[n]))
+            if t.key_ref is not None:
+                return get_ref (t.key_ref)
+            if t.field_ref is not None:
+                return get_ref (t.field_ref.key, t.field_ref.field)
+
+        def template_instances (node, instance = []):
             try:
-                params = [instance[int (n)] for n in template[1::2]]
-            except IndexError:
-                raise TemplateError ("template parameter index not available in current template instance [0:{}[".format (len (instance)))
-            return fmt.format (*params)
+                template_list = [] if node.template is None else node.template
+                def get_iterable (t):
+                    iterable = expand_template (t, instance)
+                    if not isinstance (iterable, collections.Iterable):
+                        raise TemplateError ("param is not iterable: {}".format (t))
+                    return iterable
+                return itertools.product (*[get_iterable (t) for t in template_list])
+            except TemplateError as e:
+                raise TemplateError ("line {}: {}".format (line (node), e))
+
+        def gen_name (name_elements, instance):
+            fmt = "{}".join (name_elements[0::2]) # get name_parts and insert format tokens
+            expanded = [expand_template (t, instance, in_substitution = True) for t in name_elements[1::2]]
+            return fmt.format (*expanded)
         
         # Propagate in expressions
+        def gen_index_list (l, instance):
+            return [gen_name (i, instance) for i in l]
+        def gen_array (a, instance):
+            return alter_f (a, instance, name = gen_name, index = gen_index_list)
         def gen_var (v, instance):
-            # Add line on error (name gets a string and has no parse_info)
-            # Works for both array and var, as only the name must be changed
-            try:
-                return alter_f (v, instance, name = gen_name)
-            except TemplateError as e:
-                raise TemplateError ("line {}: {}".format (line (v), e))
+            return alter_f (v, instance, name = gen_name)
         def gen_ref (s, instance):
-            if s.array is not None: return alter_f (s, instance, array = gen_var)
-            if s.var is not None: return alter_f (s, instance, var = gen_var)
+            # Add line on error (name gets a string and has no parse_info)
+            try:
+                if s.array is not None: return alter_f (s, instance, array = gen_array)
+                if s.var is not None: return alter_f (s, instance, var = gen_var)
+            except TemplateError as e:
+                raise TemplateError ("line {}: {}".format (line (s), e))
         def gen_rvalue (v, instance):
             if v.ref is not None: return alter_f (v, instance, ref = gen_ref)
             if v.const is not None: return v.const 
