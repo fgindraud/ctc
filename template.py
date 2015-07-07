@@ -3,6 +3,7 @@
 import sys
 import itertools
 import collections
+import re
 
 try:
     import grako.buffering
@@ -29,7 +30,7 @@ class CubicleCommentBuffer (grako.buffering.Buffer):
         if self.match ("(*"):
             level = 1
             while level > 0:
-                matched = self._scanre ("(?:[^(*]|\((?!\*)|\*(?!\)))*(\(\*|\*\))") # match next '(*' or '*)'
+                matched = self._scanre (".*?(\(\*|\*\))") # match next '(*' or '*)'
                 if not matched:
                     raise grako.exceptions.ParseError ("Unmatched comment at line {}".format (self.line_info ().line + 1))
                 if matched.group (1) == "(*":
@@ -46,7 +47,9 @@ class TemplateEngine:
         self.ast = parser.parse (buf, "model")
 
     def run (self, cout, data):
-        self.output_ast (cout, self.substitute (data))
+        templatized = self.substitute (data)
+        finalized = self.finalize_templatized_ast (templatized)
+        self.output_ast (cout, finalized)
 
     def substitute (self, data):
         """ Generate a new ast with substituted templates """
@@ -101,7 +104,7 @@ class TemplateEngine:
             if t.field_ref is not None:
                 return get_ref (t.field_ref.key, t.field_ref.field)
 
-        def template_instances (node, instance = []):
+        def template_instances (node, instance = tuple ()):
             try:
                 template_list = [] if node.template is None else node.template
                 def get_iterable (t):
@@ -146,24 +149,25 @@ class TemplateEngine:
         def gen_bool_expr (e, instance):
             if e.forall is not None: return alter_f (e, instance, forall = gen_forall_expr)
             if e.comp is not None: return alter_f (e, instance, comp = gen_comp_expr)
-        # expand template iterators, transforming and/or expr in plain lists
         def gen_and_expr (a, instance):
+            # expand and template iterators
             generated = []
             for and_elem in a:
                 if and_elem.expr is not None:
                     generated.append (gen_bool_expr (and_elem.expr, instance))
                 if and_elem.template is not None:
                     for new in template_instances (and_elem.template):
-                        generated.append (gen_bool_expr (and_elem.template.expr, instance + list (new)))
+                        generated.append (gen_bool_expr (and_elem.template.expr, instance + new))
             return generated
         def gen_or_expr (o, instance):
+            # expand or template iterators
             generated = []
             for or_elem in o:
                 if or_elem.expr is not None:
                     generated.append (gen_and_expr (or_elem.expr, instance))
                 if or_elem.template is not None:
                     for new in template_instances (or_elem.template):
-                        generated.append (gen_and_expr (or_elem.template.expr, instance + list (new)))
+                        generated.append (gen_and_expr (or_elem.template.expr, instance + new))
             return generated
         def gen_case (c, instance):
             if c.cond == '_': return alter_f (c, instance, expr = gen_expr)
@@ -187,7 +191,7 @@ class TemplateEngine:
                     generated.append (alter (d, name = gen_ref (d.name, instance), template = None))
             return generated 
         
-        def gen_proc_expr_construct (construct, instance = []):
+        def gen_proc_expr_construct (construct, instance = tuple ()):
             return alter (construct, expr = gen_or_expr (construct.expr, instance), template = None)
         def gen_proc_expr_construct_list (constructs):
             generated = []
@@ -212,8 +216,111 @@ class TemplateEngine:
                 init = gen_proc_expr_construct (self.ast.init),
                 invariants = gen_proc_expr_construct_list (self.ast.invariants),
                 unsafes = gen_proc_expr_construct_list (self.ast.unsafes),
-                transitions = gen_transitions (self.ast.transitions)
+                transitions = gen_transitions (self.ast.transitions))
+
+    def finalize_templatized_ast (self, ast):
+        """
+        Cleans, simplify the templatized ast
+        Removes malformed statements due to empty-set iterations
+        Checks for malformed names
+        """
+        NAME_FORMAT = re.compile ("^[A-Za-z][A-Za-z0-9_]*$")
+
+        def alter (node, **kwargs):
+            """ copy and update AST node with new args """
+            new = dict (node)
+            new.update (**kwargs)
+            return grako.ast.AST (new)
+        def clean_node (node, **funcs):
+            """ copy and update AST node with new args """
+            new = dict (node)
+            for field, func in funcs.items ():
+                new[field] = func (node[field])
+                if new[field] is None:
+                    return None
+            return grako.ast.AST (new)
+        def clean_list (l, keep_list = False):
+            """ Removes None's elements in a list, and returns None if empty """
+            cleaned = [e for e in l if e is not None]
+            return cleaned if len (cleaned) > 0 or keep_list else None
+        
+        # Propagate in expressions
+        def clean_name (name):
+            if not NAME_FORMAT.match (name):
+                raise TemplateError ("malformed name: {}".format (name))
+            return name
+        def clean_index_list (l):
+            return clean_list ([clean_name (n) for n in l])
+        def clean_array (a):
+            return clean_node (a, name = clean_name, index = clean_index_list)
+        def clean_var (v):
+            return clean_node (v, name = clean_name)
+        def clean_ref (s):
+            try:
+                if s.array is not None: return clean_node (s, array = clean_array)
+                if s.var is not None: return clean_node (s, var = clean_var)
+            except TemplateError as e:
+                raise TemplateError ("line {}: {}".format (line (s), e))
+        def clean_rvalue (v):
+            if v.ref is not None: return clean_node (v, ref = clean_ref)
+            if v.const is not None: return v.const
+        def clean_expr (e):
+            if e.val is not None: return clean_node (e, val = clean_rvalue)
+            if e.op is not None: return clean_node (e, lhs = clean_rvalue, rhs = clean_rvalue)
+        def clean_comp_expr (c):
+            return clean_node (c, lhs = clean_expr, rhs = clean_expr)
+        def clean_forall_expr (f):
+            if f.comp is not None: return clean_node (f, comp = clean_comp_expr)
+            if f.expr is not None: return clean_node (f, expr = clean_or_expr)
+        def clean_bool_expr (e):
+            if e.forall is not None: return clean_node (e, forall = clean_forall_expr)
+            if e.comp is not None: return clean_node (e, comp = clean_comp_expr)
+        def clean_and_expr (a):
+            return clean_list ([clean_bool_expr (b) for b in a])
+        def clean_or_expr (o):
+            return clean_list ([clean_and_expr (a) for a in o])
+
+        def clean_case (c): # kill case if empty guard, as a '_' guard should already exist somewhere
+            if c.cond == '_': return clean_node (c, expr = clean_expr)
+            else: return clean_node (c, cond = clean_and_expr, expr = clean_expr)
+        def clean_switch (s):
+            return clean_list ([clean_case (c) for c in s])
+        def clean_assign_value (v):
+            if v.switch is not None: return clean_node (v, switch = clean_switch)
+            if v.expr is not None: return clean_node (v, expr = clean_expr)
+            if v.rand is not None: return v
+        def clean_update (u):
+            return clean_node (u, lhs = clean_ref, rhs = clean_assign_value)
+        def clean_trans_body (b):
+            return clean_list ([clean_update (u) for u in b])
+        def clean_transition (t):
+            # allow require to be null
+            # empty updates will remove transition
+            return clean_node (alter (t, require = clean_or_expr (t.require)),
+                    name = clean_name, updates = clean_trans_body)
+        def clean_decl (d): # typename not a template yet
+            return clean_node (d, name = clean_ref) 
+
+        # Top level constructs handling
+        def clean_proc_expr_construct (construct):
+            return clean_node (construct, expr = clean_or_expr)
+        cleaned_ast = alter (ast,
+                decls = clean_list ([clean_decl (d) for d in ast.decls]),
+                init = clean_proc_expr_construct (ast.init), 
+                invariants = clean_list (
+                    [clean_proc_expr_construct (i) for i in ast.invariants], keep_list = True),
+                unsafes = clean_list ([clean_proc_expr_construct (u) for u in ast.unsafes]),
+                transitions = clean_list ([clean_transition (t) for t in ast.transitions])
                 )
+        if cleaned_ast.decls is None:
+            raise TemplateError ("no variable declaration in output")
+        if cleaned_ast.init is None:
+            raise TemplateError ("init body is empty")
+        if cleaned_ast.unsafes is None:
+            raise TemplateError ("no unsafe statement")
+        if cleaned_ast.transitions is None:
+            raise TemplateError ("no transition statement")
+        return cleaned_ast
 
     def output_ast (self, stream, ast):
         """ Generate cubicle code for template-substituted ast """
@@ -242,7 +349,7 @@ class TemplateEngine:
             return " && ".join (bool_expr (e) for e in a)
         def or_expr (o):
             return " || ".join (and_expr (a) for a in o)
-        
+
         def write_proc_expr_construct (s, name):
             write ("{} ({}) {{ {} }}", name, " ".join (s.procs), or_expr (s.expr))
 
@@ -279,14 +386,4 @@ class TemplateEngine:
                 if u.rhs.rand is not None:
                     write ("\t{} := ?;", ref (u.lhs))
             write ("}}")
-
-# Test
-
-
-data = {
-        "T": [ "A", "B" ]
-        }
-
-engine = TemplateEngine (sys.stdin)
-engine.run (sys.stdout, data)
 
