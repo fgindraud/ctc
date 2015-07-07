@@ -51,8 +51,14 @@ case = '|' ~ cond:('_' | and_expr) ':' ~ expr:expr ;
 
 # expressions
 
-or_expr = @+:and_expr {'||' ~ @+:and_expr} ;
-and_expr = @+:bool_expr {'&&' ~ @+:bool_expr} ;
+or_expr = @+:or_elem {'||' ~ @+:or_elem} ;
+or_elem = template:or_template | expr:and_expr ;
+or_template = template:template_args '(' '||' ~ expr:and_expr ')' ;
+
+and_expr = @+:and_elem {'&&' ~ @+:and_elem} ;
+and_elem = template:and_template | expr:bool_expr ;
+and_template = template:template_args '(' '&&' ~ expr:bool_expr ')' ;
+
 bool_expr = forall:forall_expr | comp:comp_expr ;
 forall_expr = 'forall_other' ~ proc:name '.' (comp:comp_expr | '(' expr:or_expr ')') ;
 comp_expr = lhs:expr op:('=' | '<>' | '<=' | '<') ~ rhs:expr ;
@@ -66,7 +72,7 @@ array_index = @+:template_name {',' ~ @+:template_name} ;
 var_ref = name:template_name ;
 
 # template
-template_args = '@' ~ @+:template {',' ~ @+:template} '@' ; # add condition ?
+template_args = '@' @+:template {',' ~ @+:template} '@' ; # add condition ?
 template_name = @+:/\w*/ {/@/ ~ @+:template '@' ~ @+:/\w*/}* ; # explicit regexp to avoid whitespace in names
 template = arg:name | field_ref:template_field_ref | key_ref:int ;
 template_field_ref = key:int '.' ~ field:name ;

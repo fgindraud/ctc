@@ -146,10 +146,25 @@ class TemplateEngine:
         def gen_bool_expr (e, instance):
             if e.forall is not None: return alter_f (e, instance, forall = gen_forall_expr)
             if e.comp is not None: return alter_f (e, instance, comp = gen_comp_expr)
+        # expand template iterators, transforming and/or expr in plain lists
         def gen_and_expr (a, instance):
-            return [gen_bool_expr (e, instance) for e in a]
+            generated = []
+            for and_elem in a:
+                if and_elem.expr is not None:
+                    generated.append (gen_bool_expr (and_elem.expr, instance))
+                if and_elem.template is not None:
+                    for new in template_instances (and_elem.template):
+                        generated.append (gen_bool_expr (and_elem.template.expr, instance + list (new)))
+            return generated
         def gen_or_expr (o, instance):
-            return [gen_and_expr (a, instance) for a in o]
+            generated = []
+            for or_elem in o:
+                if or_elem.expr is not None:
+                    generated.append (gen_and_expr (or_elem.expr, instance))
+                if or_elem.template is not None:
+                    for new in template_instances (or_elem.template):
+                        generated.append (gen_and_expr (or_elem.template.expr, instance + list (new)))
+            return generated
         def gen_case (c, instance):
             if c.cond == '_': return alter_f (c, instance, expr = gen_expr)
             else: return alter_f (c, instance, cond = gen_and_expr, expr = gen_expr)
@@ -222,6 +237,7 @@ class TemplateEngine:
         def bool_expr (e):
             if e.forall is not None: return forall_expr (e.forall)
             if e.comp is not None: return comp_expr (e.comp)
+        # here and/or expr are plain lists
         def and_expr (a):
             return " && ".join (bool_expr (e) for e in a)
         def or_expr (o):
