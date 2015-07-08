@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from template import TemplateEngine
+from template import TemplateEngine, TemplateError
 import sys
 
 data = {
@@ -16,8 +16,7 @@ data = {
         }
 
 # will need cond
-# will need template type enum genreation: @T@ (| Enum_@0@)
-# will need template update generation: @T@ (; ...)
 
-TemplateEngine (sys.stdin).run (sys.stdout, data)
+try: TemplateEngine (sys.stdin).run (sys.stdout, data)
+except TemplateError as e: print ("TemplateError: {}".format (e), file=sys.stderr)
 

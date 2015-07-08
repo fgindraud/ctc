@@ -83,6 +83,7 @@ class TemplateEngine:
             for field, func in funcs.items ():
                 new[field] = func (node[field], instance)
                 if new[field] is None:
+                    print ("deleting node", list (node.keys ()), field)
                     return None
             return grako.ast.AST (new)
         def simplify (l, keep_list = False):
@@ -102,7 +103,8 @@ class TemplateEngine:
                         n = int (index)
                         return instance[n][field]
                     except IndexError:
-                        raise TemplateError ("instance index {} undefined (defined = [0,{}[)" .format (index, len (instance)))
+                        raise TemplateError ("instance index {} undefined (defined = {})".format (
+                            index, list (range (len (instance)))))
                     except KeyError:
                         raise TemplateError ("field {} not found in instance {}".format (field_name, instance[n]))
                 if t.key_ref is not None:
@@ -187,29 +189,51 @@ class TemplateEngine:
                     for new in template_instances (or_elem.template, instance):
                         generated.append (gen_and_expr (or_elem.template.expr, instance + new))
             return simplify (generated)
+
+        # Transitions
         def gen_case (c, instance):
             if c.cond == '_': return alter_f (c, instance, expr = gen_expr)
             else: return alter_f (c, instance, cond = gen_and_expr, expr = gen_expr)
         def gen_switch (s, instance):
-            return simplify ([gen_case (c, instance) for c in s])
+            generated = []
+            for c in s:
+                if c.case is not None:
+                    generated.append (gen_case (c, instance))
+                if c.template is not None:
+                    for new in template_instances (c.template, instance):
+                        generated.extend (gen_switch (c.template.case_list, instance + new))
+            return simplify (generated)
         def gen_assign_value (v, instance):
             if v.switch is not None: return alter_f (v, instance, switch = gen_switch)
             if v.expr is not None: return alter_f (v, instance, expr = gen_expr)
             if v.rand is not None: return v
-        def gen_update (u, instance):
+        def gen_assign (u, instance):
             return alter_f (u, instance, lhs = gen_ref, rhs = gen_assign_value)
-        def gen_trans_body (b, instance):
-            return simplify ([gen_update (u, instance) for u in b])
+        def gen_update_list (l, instance):
+            generated = []
+            for u in l:
+                if u.assign is not None:
+                    generated.append (gen_assign (u.assign, instance))
+                if u.template is not None:
+                    for new in template_instances (u.template, instance):
+                        generated.extend (gen_update_list (u.template.updates, instance + new))
+            return simplify (generated)
         def gen_transition (t, instance):
             # allow require to be null
             # empty updates will remove transition
             return alter_f (alter (t, require = gen_or_expr (t.require, instance)),
-                    instance, name = gen_name, updates = gen_trans_body)
+                    instance, name = gen_name, updates = gen_update_list)
+        def gen_transitions (transitions):
+            generated = []
+            for t in transitions:
+                for instance in template_instances (t):
+                    generated.append (gen_transition (t, instance))
+            return simplify (generated)
+        
+        # Var declarations
         def gen_decl (d, instance):
-            # typename not a template yet
-            return alter_f (d, instance, name = gen_ref) 
-
-        # Top level constructs handling
+            # typename not a template
+            return alter_f (d, instance, name = gen_ref)
         def gen_decls (decls):
             generated = []
             for d in decls:
@@ -217,6 +241,23 @@ class TemplateEngine:
                     generated.append (gen_decl (d, instance))
             return simplify (generated)
         
+        # Type declarations
+        def gen_type_enum_list (enum_list, instance):
+            generated = []
+            for e in enum_list:
+                if e.name is not None:
+                    generated.append (gen_name (e.name, instance))
+                if e.template is not None:
+                    for new in template_instances (e.template, instance):
+                        generated.extend (gen_type_enum_list (e.template.enum, instance + new))
+            return simplify (generated, keep_list = True) # abstract type (no enum) permitted
+        def gen_type (t, instance):
+            # typename not a template
+            return alter_f (t, instance, enum = gen_type_enum_list)
+        def gen_types (types):
+            return simplify ([gen_type (t, tuple ()) for t in types], keep_list = True)
+
+        # Init, unsafe and invariant 
         def gen_proc_expr_construct (construct, instance = tuple ()):
             return alter_f (construct, instance, expr = gen_or_expr)
         def gen_proc_expr_construct_list (constructs, keep_list = False):
@@ -226,20 +267,14 @@ class TemplateEngine:
                     generated.append (gen_proc_expr_construct (c, instance))
             return simplify (generated, keep_list = keep_list)
 
-        def gen_transitions (transitions):
-            generated = []
-            for t in transitions:
-                for instance in template_instances (t):
-                    generated.append (gen_transition (t, instance))
-            return simplify (generated)
-
-        new_ast = alter (self.ast, 
+        # Main
+        new_ast = alter (self.ast,
+                types = gen_types (self.ast.types),
                 decls = gen_decls (self.ast.decls),
                 init = gen_proc_expr_construct (self.ast.init),
                 invariants = gen_proc_expr_construct_list (self.ast.invariants, keep_list = True),
                 unsafes = gen_proc_expr_construct_list (self.ast.unsafes),
                 transitions = gen_transitions (self.ast.transitions))
-
         if new_ast.decls is None:
             raise TemplateError ("no variable declaration in output")
         if new_ast.init is None:

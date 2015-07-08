@@ -1,5 +1,27 @@
 # We simplify the language by not caring about uppercase/lowercase names
-# Keywords rules must be placed first everytime to not be matched as names
+#
+# Template elements :
+# * <str> -> iter on top-level elements of data
+# * <int n> -> n-th template argument in the stack
+# * <int n>.<str> -> str field of n-th argument in the stack
+#
+# These elements can be used in:
+# * template declaration: comma separated list of elements between two '@' (must point to iterable)
+# * template substitution: one element between two '@' in a name
+#
+# In expressions, supports template constructs:
+# @<template decl>@ (&& <and of boolean expressions>)
+# @<template decl>@ (|| <or of boolean expressions>)
+# 
+# In type declaration :
+# @<template decl>@ (| <enum names>)
+#
+# In transition body :
+# @<template decl>@ (; <transition updates>)
+# @<template decl>@ (| <switch case patterns>)
+#
+# All statements (but init) can use templates:
+# <statement name> @<template_decl>@ <statement stuff>
 
 model =
 	[size_proc:size_proc]
@@ -17,8 +39,10 @@ size_proc = 'number_procs' ~ @:int ;
 
 # types
 type_def_list = {type_def} ; 
-type_def = 'type' ~ name:name ['=' ['|'] enum:type_enum] ;
-type_enum = @+:name {'|' ~ @+:name} ;
+type_def = 'type' ~ name:name ['=' ['|'] enum:type_enum_list] ;
+type_enum_list = @+:type_enum {'|' ~ @+:type_enum} ;
+type_enum = template:enum_template | name:template_name ;
+enum_template = template:template_args '(' '|' ~ enum:type_enum_list ')' ;
 
 # declarations
 declaration_list = {decl} ;
@@ -40,13 +64,19 @@ transition_list = {transition} ;
 transition =
 	'transition' ~ [template:template_args] name:template_name '(' procs:name_space_list ')' ~
 	[require:transition_require]
-	updates:transition_body
+	'{' ~ updates:transition_update_list '}'
 	;
 transition_require = 'requires' ~ '{' @:or_expr '}' ;
-transition_body = '{' ~ {@+:transition_assign ';'} [@+:transition_assign [';']] '}' ;
+transition_update_list = {@+:transition_update ';'} [@+:transition_update [';']] ;
+transition_update = template:update_template | assign:transition_assign ;
+update_template = template:template_args '(' ';' ~ updates:transition_update_list ')' ;
+
 transition_assign = lhs:ref ':=' ~ rhs:transition_rvalue ;
 transition_rvalue = switch:switch_case | expr:expr | rand:('.' | '?') ;
-switch_case = 'case' ~ {@+:case}+ ;
+switch_case = 'case' ~ @:case_list ;
+case_list = {@+:case}+ ;
+case_elem = template:case_template | case:case ;
+case_template = template:template_args '(' '|' ~ case_list:case_list ')' ;
 case = '|' ~ cond:('_' | and_expr) ':' ~ expr:expr ;
 
 # expressions
