@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import sys
-import itertools
 import collections
 import re
 
@@ -83,7 +82,6 @@ class TemplateEngine:
             for field, func in funcs.items ():
                 new[field] = func (node[field], instance)
                 if new[field] is None:
-                    print ("deleting node", list (node.keys ()), field)
                     return None
             return grako.ast.AST (new)
         def simplify (l, keep_list = False):
@@ -106,7 +104,7 @@ class TemplateEngine:
                         raise TemplateError ("instance index {} undefined (defined = {})".format (
                             index, list (range (len (instance)))))
                     except KeyError:
-                        raise TemplateError ("field {} not found in instance {}".format (field_name, instance[n]))
+                        raise TemplateError ("field {} not found in instance {}".format (field, instance[n]))
                 if t.key_ref is not None:
                     return get_ref (t.key_ref)
                 if t.field_ref is not None:
@@ -115,24 +113,42 @@ class TemplateEngine:
                 raise TemplateError ("line {}: {}".format (line (t), e))
                 
         def template_instances (node, instance = tuple ()):
-            template_list = [] if node.template is None else node.template
-            def get_iterable (t):
-                try:
-                    iterable = expand_template (t, instance)
-                    # normalize it to a dict with _key storing the element key or simple value
-                    def normalize (key, dict_ = {}):
-                        normalized = dict (dict_)
-                        normalized["_key"] = key
-                        return normalized
-                    if isinstance (iterable, collections.Mapping):
-                        return [normalize (k, d) for k, d in iterable.items ()]
-                    elif isinstance (iterable, collections.Iterable):
-                        return [normalize (k) for k in iterable]
-                    else: 
-                        raise TemplateError ("template value is not iterable: {}".format (iterable))
-                except TemplateError as e:
-                    raise TemplateError ("in declaration @{}@: {}".format (template_str (t), e))
-            return itertools.product (*[get_iterable (t) for t in template_list])
+            """
+            Returns a generator for sub instances formed from a current instance (context)
+            and a template declaration node.
+            It allows referencing previous index in each declaration.
+            It allows to filter instances with a condition
+            """
+            def normalize (key, dict_ = {}):
+                # normalize an expanded template argument to a dict with _key storing the element key or simple value
+                normalized = dict (dict_)
+                normalized["_key"] = key
+                return normalized
+            def instance_generator_rec (t_list, inst):
+                if len (t_list) == 0:
+                    # end case, return empty instance
+                    yield tuple ()
+                else:
+                    # retrieve iterable
+                    try:
+                        iterable = expand_template (t_list[0], inst)
+                        if isinstance (iterable, collections.Mapping):
+                            iterable = [normalize (k, d) for k, d in iterable.items ()]
+                        elif isinstance (iterable, collections.Iterable):
+                            iterable = [normalize (k) for k in iterable]
+                        else: 
+                            raise TemplateError ("template value is not iterable: {}".format (iterable))
+                        iterable.sort (key = lambda e: e["_key"])
+                    except TemplateError as e:
+                        raise TemplateError ("in declaration @{}@: {}".format (template_str (t_list[0]), e))
+                    # generate sub_instances
+                    for head_ in iterable:
+                        head = (head_,)
+                        for tail in instance_generator_rec (t_list[1:], inst + head):
+                            yield head + tail
+            for sub_instance in instance_generator_rec ([] if node.template is None else node.template, instance):
+                # TODO cond
+                yield instance + sub_instance
         
         def gen_name (name_elements, instance):
             try:
@@ -177,7 +193,7 @@ class TemplateEngine:
                     generated.append (gen_bool_expr (and_elem.expr, instance))
                 if and_elem.template is not None:
                     for new in template_instances (and_elem.template, instance):
-                        generated.extend (gen_and_expr (and_elem.template.expr, instance + new))
+                        generated.extend (gen_and_expr (and_elem.template.expr, new))
             return simplify (generated)
         def gen_or_expr (o, instance):
             # expand or template iterators
@@ -187,7 +203,7 @@ class TemplateEngine:
                     generated.append (gen_and_expr (or_elem.expr, instance))
                 if or_elem.template is not None:
                     for new in template_instances (or_elem.template, instance):
-                        generated.append (gen_and_expr (or_elem.template.expr, instance + new))
+                        generated.append (gen_and_expr (or_elem.template.expr, new))
             return simplify (generated)
 
         # Transitions
@@ -201,7 +217,7 @@ class TemplateEngine:
                     generated.append (gen_case (c, instance))
                 if c.template is not None:
                     for new in template_instances (c.template, instance):
-                        generated.extend (gen_switch (c.template.case_list, instance + new))
+                        generated.extend (gen_switch (c.template.case_list, new))
             return simplify (generated)
         def gen_assign_value (v, instance):
             if v.switch is not None: return alter_f (v, instance, switch = gen_switch)
@@ -216,7 +232,7 @@ class TemplateEngine:
                     generated.append (gen_assign (u.assign, instance))
                 if u.template is not None:
                     for new in template_instances (u.template, instance):
-                        generated.extend (gen_update_list (u.template.updates, instance + new))
+                        generated.extend (gen_update_list (u.template.updates, new))
             return simplify (generated)
         def gen_transition (t, instance):
             # allow require to be null
@@ -249,7 +265,7 @@ class TemplateEngine:
                     generated.append (gen_name (e.name, instance))
                 if e.template is not None:
                     for new in template_instances (e.template, instance):
-                        generated.extend (gen_type_enum_list (e.template.enum, instance + new))
+                        generated.extend (gen_type_enum_list (e.template.enum, new))
             return simplify (generated, keep_list = True) # abstract type (no enum) permitted
         def gen_type (t, instance):
             # typename not a template
