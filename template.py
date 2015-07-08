@@ -137,7 +137,7 @@ class TemplateEngine:
                 raise TemplateError ("line {}: {}".format (line (s), e))
         def gen_rvalue (v, instance):
             if v.ref is not None: return alter_f (v, instance, ref = gen_ref)
-            if v.const is not None: return v.const 
+            if v.const is not None: return v
         def gen_expr (e, instance):
             if e.val is not None: return alter_f (e, instance, val = gen_rvalue)
             if e.op is not None: return alter_f (e, instance, lhs = gen_rvalue, rhs = gen_rvalue)
@@ -157,7 +157,7 @@ class TemplateEngine:
                     generated.append (gen_bool_expr (and_elem.expr, instance))
                 if and_elem.template is not None:
                     for new in template_instances (and_elem.template):
-                        generated.append (gen_bool_expr (and_elem.template.expr, instance + new))
+                        generated.extend (gen_and_expr (and_elem.template.expr, instance + new))
             return generated
         def gen_or_expr (o, instance):
             # expand or template iterators
@@ -263,7 +263,7 @@ class TemplateEngine:
                 raise TemplateError ("line {}: {}".format (line (s), e))
         def clean_rvalue (v):
             if v.ref is not None: return clean_node (v, ref = clean_ref)
-            if v.const is not None: return v.const
+            if v.const is not None: return v
         def clean_expr (e):
             if e.val is not None: return clean_node (e, val = clean_rvalue)
             if e.op is not None: return clean_node (e, lhs = clean_rvalue, rhs = clean_rvalue)
