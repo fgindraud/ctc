@@ -42,52 +42,52 @@ type_def_list = {type_def} ;
 type_def = 'type' ~ name:name ['=' ['|'] enum:type_enum_list] ;
 type_enum_list = @+:type_enum {'|' ~ @+:type_enum} ;
 type_enum = template:enum_template | name:template_name ;
-enum_template = template:template_args '(' '|' ~ enum:type_enum_list ')' ;
+enum_template = decl:template_decl '(' '|' ~ enum:type_enum_list ')' ;
 
 # declarations
 declaration_list = {decl} ;
-decl = kind:('const' | 'var' | 'array') ~ [template:template_args] name:ref ':' typename:name ;
+decl = kind:('const' | 'var' | 'array') ~ [decl:template_decl] name:ref ':' typename:name ;
 
 # init
 init = 'init' ~ '(' procs:name_space_list ')' ~ '{' expr:or_expr '}' ;
 
 # invariants
 invariant_list = {invariant} ;
-invariant = 'invariant' ~ [template:template_args] '(' procs:name_space_list ')' ~ '{' expr:or_expr '}' ;
+invariant = 'invariant' ~ [decl:template_decl] '(' procs:name_space_list ')' ~ '{' expr:or_expr '}' ;
 
 # unsafe
 unsafe_list = {unsafe}+ ;
-unsafe = 'unsafe' ~ [template:template_args] '(' procs:name_space_list ')' ~ '{' expr:or_expr '}' ;
+unsafe = 'unsafe' ~ [decl:template_decl] '(' procs:name_space_list ')' ~ '{' expr:or_expr '}' ;
 
 # transition
 transition_list = {transition} ;
 transition =
-	'transition' ~ [template:template_args] name:template_name '(' procs:name_space_list ')' ~
+	'transition' ~ [decl:template_decl] name:template_name '(' procs:name_space_list ')' ~
 	[require:transition_require]
 	'{' ~ updates:transition_update_list '}'
 	;
 transition_require = 'requires' ~ '{' @:or_expr '}' ;
 transition_update_list = {@+:transition_update ';'} [@+:transition_update [';']] ;
 transition_update = template:update_template | assign:transition_assign ;
-update_template = template:template_args '(' ';' ~ updates:transition_update_list ')' ;
+update_template = decl:template_decl '(' ';' ~ updates:transition_update_list ')' ;
 
 transition_assign = lhs:ref ':=' ~ rhs:transition_rvalue ;
 transition_rvalue = switch:switch_case | expr:expr | rand:('.' | '?') ;
 switch_case = 'case' ~ @:case_list ;
 case_list = {@+:case}+ ;
 case_elem = template:case_template | case:case ;
-case_template = template:template_args '(' '|' ~ case_list:case_list ')' ;
+case_template = decl:template_decl '(' '|' ~ case_list:case_list ')' ;
 case = '|' ~ cond:('_' | and_expr) ':' ~ expr:expr ;
 
 # expressions
 
 or_expr = @+:or_elem {'||' ~ @+:or_elem} ;
 or_elem = template:or_template | expr:and_expr ;
-or_template = template:template_args '(' '||' ~ expr:and_expr ')' ;
+or_template = decl:template_decl '(' '||' ~ expr:and_expr ')' ;
 
 and_expr = @+:and_elem {'&&' ~ @+:and_elem} ;
 and_elem = template:and_template | expr:bool_expr ;
-and_template = template:template_args '(' '&&' ~ expr:and_expr ')' ;
+and_template = decl:template_decl '(' '&&' ~ expr:and_expr ')' ;
 
 bool_expr = forall:forall_expr | comp:comp_expr ;
 forall_expr = 'forall_other' ~ proc:name '.' (comp:comp_expr | '(' expr:or_expr ')') ;
@@ -102,7 +102,8 @@ array_index = @+:template_name {',' ~ @+:template_name} ;
 var_ref = name:template_name ;
 
 # template
-template_args = '@' @+:template {',' ~ @+:template} ['|' ~ cond:or_expr] '@' ;
+template_decl = '@' args:template_list ['|' ~ cond:or_expr] '@' ;
+template_list = @+:template {',' ~ @+:template}* ;
 template_name = @+:/\w*/ {/@/ ~ @+:template '@' ~ @+:/\w*/}* ; # explicit regexp to avoid whitespace in names
 template = arg:name | field_ref:template_field_ref | key_ref:int ;
 template_field_ref = key:int '.' ~ field:name ;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from template import TemplateEngine, TemplateError
+from template import CubicleTemplateCompiler, TemplateError
 import sys
 
 data = {
@@ -17,6 +17,6 @@ data = {
 
 # will need cond
 
-try: TemplateEngine (sys.stdin).run (sys.stdout, data)
+try: CubicleTemplateCompiler (sys.stdin).run (sys.stdout, data)
 except TemplateError as e: print ("TemplateError: {}".format (e), file=sys.stderr)
 
