@@ -189,9 +189,9 @@ transition @T | @0.access@ = RO @ task_@0@_trigger_data_req (n)
 	SendTo[n] := RegOwner;
 }
 
-transition @T@ task_@0@_trigger_own_req (n)
+transition @T | @0.access@ = RW @ task_@0@_trigger_own_req (n)
 	requires {
-		Task_@0@_State = TS_Caching && @0.access@ = RW && Task_@0@_Node = n &&
+		Task_@0@_State = TS_Caching && Task_@0@_Node = n &&
 		RegOwner <> n && RegRequest[n] = False &&
 		Sq[n] = Msg_Empty
 	}
@@ -203,28 +203,11 @@ transition @T@ task_@0@_trigger_own_req (n)
 }
 
 (* start to run *)
-transition @T@ rw_task_@0@_starts_running (n)
+transition @T@ task_@0@_starts_running (n)
 	requires {
-		Task_@0@_State = TS_Caching && @0.access@ = RW && Task_@0@_Node = n &&
-		n = RegOwner
-	}
-{
-	Task_@0@_State := TS_Running;
-}
-
-
-transition @T@ ro_task_@0@_starts_running (n)
-	requires {
-		Task_@0@_State = TS_Caching && @0.access@ = RO && Task_@0@_Node = n &&
-		RegValid[n] = True
-	}
-{
-	Task_@0@_State := TS_Running;
-}
-
-transition @T@ nu_task_@0@_starts_running (n)
-	requires {
-		Task_@0@_State = TS_Caching && @0.access@ = NU && Task_@0@_Node = n
+		Task_@0@_State = TS_Caching && Task_@0@_Node = n &&
+		@| @0.access@ = RW @ (&& n = RegOwner) &&
+		@| @0.access@ = RO @ (&& RegValid[n] = True)
 	}
 {
 	Task_@0@_State := TS_Running;
@@ -233,29 +216,21 @@ transition @T@ nu_task_@0@_starts_running (n)
 (* stop running *)
 transition @T@ task_@0@_stop_running (n)
 	requires {
-		Task_@0@_State = TS_Running && @0.access@ = RW && Task_@0@_Node = n
+		Task_@0@_State = TS_Running && Task_@0@_Node = n
 	}
 {
-	RegData[n] := D_@0@;
-	Task_@0@_State := TS_Publishing;
+	@| @0.access@ = RW @ (;
+		RegData[n] := D_@0@;
+		Task_@0@_State := TS_Publishing;
+	);
+	@| @0.access@ <> RW @ (;
+		Task_@0@_State := TS_Finished;
+	);	
 }
 
-(*
-transition not_rw_stop_running (id n)
+transition @T | @0.access@ = RW @ task_@0@_trigger_inv_req (n m)
 	requires {
-		Init = True &&
-		Sort = Task_@0@_ && Sort[n] = Node &&
-		Task_@0@_State = TS_Running && Task_@0@_AccessMode <> RW && Task_@0@_Node = n
-	}
-{
-	Task_@0@_State := TS_DepSolving; (* don't need publishing for read only or not_used *)
-}
-
-transition trigger_inv_req (id n m)
-	requires {
-		Init = True &&
-		Sort = Task_@0@_ && Sort[n] = Node && Sort[m] = Node &&
-		Task_@0@_State = TS_Publishing && Task_@0@_AccessMode = RW && Task_@0@_Node = n &&
+		Task_@0@_State = TS_Publishing && Task_@0@_Node = n &&
 		RegVs[m] = Valid &&
 		Sq[n] = Msg_Empty
 	}
@@ -266,29 +241,16 @@ transition trigger_inv_req (id n m)
 	SendTo[n] := m;
 }
 
-transition all_inv_ack_received (id n)
+transition @T | @0.access@ = RW @ task_@0@_all_inv_ack_received (n)
 	requires {
-		Init = True &&
-		Sort = Task_@0@_ && Sort[n] = Node &&
-		Task_@0@_State = TS_Publishing && Task_@0@_AccessMode = RW && Task_@0@_Node = n &&
+		Task_@0@_State = TS_Publishing && Task_@0@_Node = n &&
 		forall_other m. (RegVs[m] = Invalid)
 	}
 {
-	Task_@0@_State := TS_DepSolving;
+	Task_@0@_State := TS_Finished;
 }
 
 (*transition trigger_local_tdec*)
 (*transition trigger_remote_tdec*)
 (*transition handle_perform_tdec*)
 
-transition solve_dep (id n dep)
-	requires {
-		Init = True &&
-		Sort = Task_@0@_ && Sort[n] = Node && Sort[dep] = Task_@0@_ &&
-		Task_@0@_State = TS_DepSolving && Task_@0@_Node = n &&
-		Task_@0@_Dep[id, dep] = True && Task_@0@_SC[dep] <= 1 (* max of system *)
-	}
-{
-	Task_@0@_Dep[id, dep] := False;
-	Task_@0@_SC[dep] := Task_@0@_SC[dep] - 1;
-}*)

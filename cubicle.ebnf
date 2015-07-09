@@ -1,25 +1,29 @@
-# We simplify the language by not caring about uppercase/lowercase names
-#
 # Template elements :
 # * <str> -> iter on top-level elements of data
 # * <int n> -> n-th template argument in the stack
 # * <int n>.<str> -> str field of n-th argument in the stack
-#
-# These elements can be used in:
-# * template declaration: comma separated list of elements between two '@' (must point to iterable)
-# * template substitution: one element between two '@' in a name
-#
+
+# Template substitution: @ <template_element> @
+# -> Used in a name to be substituted by the instance element value
+
+# Template declaration: @ [<template_element> [, <template_element> [...]]] [ | <condition> ] @
+# -> Used before duplicable constructs and expressions to replicate them with values picked from the input data
+# -> The template elements must refer to iterable structures (map, list)
+# -> Instance values will be organised as a stack, and template elements indexes will refer to them in order of declaration
+# -> Nested templates declaration put their value on top of the stack
+# Example: @T, R@ (&& @Z@ (&& @0@ = @1@_@2@)) -> 0 takes values of T, 1 of R, 2 of Z
+
 # In expressions, supports template constructs:
 # @<template decl>@ (&& <and of boolean expressions>)
 # @<template decl>@ (|| <or of boolean expressions>)
-# 
+
 # In type declaration :
 # @<template decl>@ (| <enum names>)
-#
+
 # In transition body :
 # @<template decl>@ (; <transition updates>)
 # @<template decl>@ (| <switch case patterns>)
-#
+
 # All statements (but init) can use templates:
 # <statement name> @<template_decl>@ <statement stuff>
 
@@ -102,15 +106,15 @@ array_index = @+:template_name {',' ~ @+:template_name} ;
 var_ref = name:template_name ;
 
 # template
-template_decl = '@' args:template_list ['|' ~ cond:or_expr] '@' ;
-template_list = @+:template {',' ~ @+:template}* ;
-template_name = @+:/\w*/ {/@/ ~ @+:template '@' ~ @+:/\w*/}* ; # explicit regexp to avoid whitespace in names
+template_decl = '@' [args:template_list] ['|' ~ cond:or_expr] '@' ;
+template_list = @+:template {',' ~ @+:template} ;
+template_name = @+:/\w*/ {/@/ ~ @+:template '@' ~ @+:/\w*/} ; # explicit regexp to avoid whitespace in names
 template = arg:name | field_ref:template_field_ref | key_ref:int ;
 template_field_ref = key:int '.' ~ field:name ;
 
 # lexical elements
 name_space_list = {name} ;
-name = /[A-Za-z][A-Za-z0-9_]*/ ;
+name = /[A-Za-z][A-Za-z0-9_]*/ ; # Simplification ; no difference between lowercase / uppercase names
 int = /[0-9]+/ ;
 bool = 'True' | 'False' ;
 

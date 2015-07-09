@@ -265,7 +265,8 @@ class TemplateInstanceGenerator:
         It allows to filter instances with a condition
         """
         if tpl_decl is None:
-            yield self.empty ()
+            # No template declaration at all, generate one instance with current context
+            yield context
             return
 
         def normalize (key, dict_ = {}):
@@ -305,8 +306,9 @@ class TemplateInstanceGenerator:
                 return True
             expanded_cond = self.engine.or_expr (tpl_decl.cond, context)
             return self.text_eval.or_expr (expanded_cond)
-
-        for sub_instance in recursive_generator (tpl_decl.args, context):
+        
+        tpl_args = [] if tpl_decl.args is None else tpl_decl.args
+        for sub_instance in recursive_generator (tpl_args, context):
             instance = context + sub_instance
             if eval_cond (instance):
                 yield instance
