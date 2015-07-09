@@ -1,0 +1,294 @@
+(* Use of templates *)
+
+type msg = Msg_DataReq | Msg_DataAns | Msg_OwnReq | Msg_OwnTrans | Msg_InvReq | Msg_InvAck | Msg_Empty
+
+type task_state = TS_Created | TS_Eligible | TS_Caching | TS_Running | TS_Publishing | TS_DepSolving | TS_Finished | TS_Empty
+type mode = RO | RW | NU (* not used *)
+
+type valid_set_state = Valid | WaitingInvAck | Invalid
+
+type data = D_Init | @T@ (| D_@0@ )
+
+(* network, proc = node *)
+array Sq[proc] : msg
+array SqData[proc] : data
+array SendTo[proc] : proc
+
+array Rq[proc] : msg
+array RqData[proc] : data
+array RecvFrom[proc] : proc
+
+(* proc = task *)
+var @T@ Task_@0@_State : task_state
+var @T@ Task_@0@_Node : proc (* node of task *)
+
+(* region data by node, proc = node *)
+array RegValid[proc] : bool (* has valid data *)
+array RegRequest[proc] : bool (* node sent a pending request *)
+array RegData[proc] : data (* local copy *)
+
+var RegOwner : proc (* seen by all *)
+array RegVs[proc] : valid_set_state (* owner-only by node array *)
+
+init (x owner) {
+	Sq[x] = Msg_Empty &&
+	Rq[x] = Msg_Empty &&
+	(* RecvFrom will be updated when msg arrive *)
+
+	@T@ (&& Task_@0@_State = TS_Created) &&
+	(* Task node is left unspecified *)
+	
+	(* RegOwner unset *)
+	RegValid[x] = False && 
+	RegRequest[x] = False &&
+	RegData[x] = D_Init &&
+	RegVs[x] = Invalid
+}
+
+unsafe (t n) { (* TODO convert *)
+	Sort[t] = Task && Sort[n] = Node &&
+	TaskNode[t] = n && TaskAccessMode[t] = RO && TaskState[t] = TS_Running && 
+	RegData[n] <> TaskAccessData[t]
+}
+
+(* Network usage
+Place data in Sq (send queue), set target in SendTo
+Not affected by init
+*)
+transition transmit_msg (n to)
+	requires {
+		Sq[n] <> Msg_Empty &&
+		SendTo[n] = to && Rq[to] = Msg_Empty
+	}
+{
+	Sq[n] := Msg_Empty;
+	Rq[to] := Sq[n];
+	RqData[to] := SqData[n];
+	RecvFrom[to] := n;
+}
+
+(* Protocol handling *)
+
+(*transition forward_Data_Req (n from) TODO distributed owner*)
+
+transition handle_Data_Req (n from)
+	requires {
+		Rq[n] = Msg_DataReq && RecvFrom[n] = from &&
+		Sq[n] = Msg_Empty
+	}
+{ 
+	Rq[n] := Msg_Empty;
+
+	RegVs[from] := Valid;
+
+	Sq[n] := Msg_DataAns;
+	SqData[n] := RegData[n];
+	SendTo[n] := from;
+}
+
+transition handle_Data_Ans (n from)
+	requires {
+		Rq[n] = Msg_DataAns && RecvFrom[n] = from
+	}
+{
+	Rq[n] := Msg_Empty;
+
+	RegValid[n] := True;
+	RegData[n] := RqData[n];
+	RegRequest[n] := False;
+}
+
+(*transition forward_Own_Req(n from to)*)
+
+transition handle_Owner_Req (n from)
+	requires {
+		Rq[n] = Msg_OwnReq && RecvFrom[n] = from &&
+		Sq[n] = Msg_Empty
+	}
+{ 
+	Rq[n] := Msg_Empty;
+
+	(* cannot remove ownership in two parts (only 1 global RegOwner pointer). Will be done in transfer *)
+
+	Sq[n] := Msg_OwnTrans;
+	SqData[n] := RegData[n];
+	SendTo[n] := from;
+}
+
+transition handle_Owner_Transfer (n from)
+	requires {
+		Rq[n] = Msg_OwnTrans && RecvFrom[n] = from
+	}
+{
+	Rq[n] := Msg_Empty;
+
+	RegOwner := n;
+	RegValid[n] := True;
+	RegData[n] := RqData[n];
+	RegRequest[n] := False;
+
+	RegVs[i] := case
+		| i = n : Invalid
+		| i = from : Valid (* should be done in Msg_OwnReq when Owner is decoupled *)
+		| _ : RegVs[i];
+}
+
+transition handle_Inv_Req (n from)
+	requires {
+		Rq[n] = Msg_InvReq && RecvFrom[n] = from &&
+		Sq[n] = Msg_Empty
+	}
+{
+	Rq[n] := Msg_Empty;
+
+	RegValid[n] := False;     
+		
+	Sq[n] := Msg_InvAck;
+	SendTo[n] := from;
+}
+
+transition handle_Inv_Ack (n from)
+	requires {
+		Rq[n] = Msg_InvReq && RecvFrom[n] = from
+	}
+{
+	Rq[n] := Msg_Empty;
+	
+	RegVs[from] := Invalid;
+}
+
+(* Task State transitions *)
+
+transition @T@ task_@0@_becomes_eligible (n) 
+	requires {
+		Task_@0@_State = TS_Created && Task_@0@_Node = n &&
+		@0.dep@ (&& Task_@1@_State = TS_Finished)
+	}
+{
+	Task_@0@_State[id] := TS_Eligible;
+}
+
+transition @T@ task_@0@_starts_caching (n)
+	requires {
+		Task_@0@_State = TS_Eligible && Task_@0@_Node = n
+	}
+{
+	Task_@0@_State := TS_Caching;
+}
+
+transition @T | @0.access@ = RO @ task_@0@_trigger_data_req (n)
+	requires {
+		Task_@0@_State = TS_Caching && Task_@0@_Node = n &&
+		RegValid[n] = False && RegRequest[n] = False &&
+		Sq[n] = Msg_Empty
+	}
+{
+	RegRequest[n] := True;
+
+	Sq[n] := Msg_DataReq;
+	SendTo[n] := RegOwner;
+}
+
+transition @T@ task_@0@_trigger_own_req (n)
+	requires {
+		Task_@0@_State = TS_Caching && @0.access@ = RW && Task_@0@_Node = n &&
+		RegOwner <> n && RegRequest[n] = False &&
+		Sq[n] = Msg_Empty
+	}
+{
+	RegRequest[n] := True;
+
+	Sq[n] := Msg_OwnReq;
+	SendTo[n] := RegOwner;
+}
+
+(* start to run *)
+transition @T@ rw_task_@0@_starts_running (n)
+	requires {
+		Task_@0@_State = TS_Caching && @0.access@ = RW && Task_@0@_Node = n &&
+		n = RegOwner
+	}
+{
+	Task_@0@_State := TS_Running;
+}
+
+
+transition @T@ ro_task_@0@_starts_running (n)
+	requires {
+		Task_@0@_State = TS_Caching && @0.access@ = RO && Task_@0@_Node = n &&
+		RegValid[n] = True
+	}
+{
+	Task_@0@_State := TS_Running;
+}
+
+transition @T@ nu_task_@0@_starts_running (n)
+	requires {
+		Task_@0@_State = TS_Caching && @0.access@ = NU && Task_@0@_Node = n
+	}
+{
+	Task_@0@_State := TS_Running;
+}
+
+(* stop running *)
+transition @T@ task_@0@_stop_running (n)
+	requires {
+		Task_@0@_State = TS_Running && @0.access@ = RW && Task_@0@_Node = n
+	}
+{
+	RegData[n] := D_@0@;
+	Task_@0@_State := TS_Publishing;
+}
+
+(*
+transition not_rw_stop_running (id n)
+	requires {
+		Init = True &&
+		Sort = Task_@0@_ && Sort[n] = Node &&
+		Task_@0@_State = TS_Running && Task_@0@_AccessMode <> RW && Task_@0@_Node = n
+	}
+{
+	Task_@0@_State := TS_DepSolving; (* don't need publishing for read only or not_used *)
+}
+
+transition trigger_inv_req (id n m)
+	requires {
+		Init = True &&
+		Sort = Task_@0@_ && Sort[n] = Node && Sort[m] = Node &&
+		Task_@0@_State = TS_Publishing && Task_@0@_AccessMode = RW && Task_@0@_Node = n &&
+		RegVs[m] = Valid &&
+		Sq[n] = Msg_Empty
+	}
+{
+	RegVs[m] := WaitingInvAck;
+
+	Sq[n] := Msg_InvReq;
+	SendTo[n] := m;
+}
+
+transition all_inv_ack_received (id n)
+	requires {
+		Init = True &&
+		Sort = Task_@0@_ && Sort[n] = Node &&
+		Task_@0@_State = TS_Publishing && Task_@0@_AccessMode = RW && Task_@0@_Node = n &&
+		forall_other m. (RegVs[m] = Invalid)
+	}
+{
+	Task_@0@_State := TS_DepSolving;
+}
+
+(*transition trigger_local_tdec*)
+(*transition trigger_remote_tdec*)
+(*transition handle_perform_tdec*)
+
+transition solve_dep (id n dep)
+	requires {
+		Init = True &&
+		Sort = Task_@0@_ && Sort[n] = Node && Sort[dep] = Task_@0@_ &&
+		Task_@0@_State = TS_DepSolving && Task_@0@_Node = n &&
+		Task_@0@_Dep[id, dep] = True && Task_@0@_SC[dep] <= 1 (* max of system *)
+	}
+{
+	Task_@0@_Dep[id, dep] := False;
+	Task_@0@_SC[dep] := Task_@0@_SC[dep] - 1;
+}*)

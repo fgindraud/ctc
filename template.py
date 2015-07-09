@@ -3,7 +3,9 @@
 import sys
 import collections
 import re
+import operator
 
+# Get grako libraries
 try:
     import grako.buffering
     import grako.exceptions
@@ -23,7 +25,8 @@ except ImportError:
 class TemplateError (Exception):
     pass
 
-class CubicleCommentBuffer (grako.buffering.Buffer):
+# Custom buffer to remove caml-style comments
+class CubicleBuffer (grako.buffering.Buffer):
     """ Handles removing the caml-style recursive comments in cubicle """
     def eat_comments (self):
         if self.match ("(*"):
@@ -38,15 +41,116 @@ class CubicleCommentBuffer (grako.buffering.Buffer):
                     level -= 1
                 self.move (len (matched.group (0)))
 
+# Ast expression printing
+class ExprPrinterCommon:
+    """ Collections of str(expr) functions independent of expansion """
+    def array (self, a):
+        return "{}[{}]".format (self.name (a.name), ", ".join (map (self.name, a.index)))
+    def ref (self, s):
+        if s.array is not None: return self.array (s.array)
+        if s.var is not None: return self.name (s.var.name)
+    def rvalue (self, v):
+        if v.ref is not None: return self.ref (v.ref)
+        if v.const is not None: return v.const
+    def expr (self, e):
+        if e.val is not None: return self.rvalue (e.val)
+        if e.op is not None: return "{} {} {}".format (self.rvalue (e.lhs), e.op, self.rvalue (e.rhs))
+    def comp_expr (self, c):
+        return "{} {} {}".format (self.expr (c.lhs), c.op, self.expr (c.rhs))
+    def forall_expr (self, f):
+        if f.comp is not None: return "forall_other {}. {}".format (f.name, self.comp_expr (f.comp))
+        if f.expr is not None: return "forall_other {}. ({})".format (f.name, self.or_expr (f.expr))
+    def bool_expr (self, e):
+        if e.forall is not None: return self.forall_expr (e.forall)
+        if e.comp is not None: return self.comp_expr (e.comp)
+    
+    def and_expr (self, a):
+        return " && ".join (map (self.and_elem, a))
+    def or_expr (self, o):
+        return " || ".join (map (self.or_elem, o))
+
+class ExprPrinterRaw (ExprPrinterCommon):
+    """ Collections of str(expr) functions for an ast before expansion """
+    def template (self, t):
+        if t.arg is not None: return t.arg
+        if t.key_ref is not None: return t.key_ref
+        if t.field_ref is not None: return "{}.{}".format (t.field_ref.key, t.field_ref.field)
+    def template_args (self, a):
+        return "@{}@".format (", ".join (map (self.template, a)))
+    def name (self, n): # template name
+        name_parts = n[:]
+        name_parts[1::2] = map ("@{}@".format, map (self.template, name_parts[1::2]))
+        return "".join (name_parts)
+    def and_elem (self, e):
+        if e.expr is not None: return self.bool_expr (e.expr)
+        if e.template is not None: return "{} (&& {})".format (
+                self.template_args (e.template.template), self.and_expr (e.template.expr))
+    def or_elem (self, e):
+        if e.expr is not None: return self.and_expr (e.expr)
+        if e.template is not None: return "{} (|| {})".format (
+                self.template_args (e.template.template), self.and_expr (e.template.expr))
+
+class ExprPrinterExpanded (ExprPrinterCommon):
+    """ Collections of str(expr) functions for an expanded ast """
+    def name (self, n):
+        return n
+    def and_elem (self, e):
+        return self.bool_expr (e)
+    def or_elem (self, e):
+        return self.and_expr (e)
+
+# Ast final printer
+class AstPrinterExpanded (ExprPrinterExpanded):
+    def write (self, stream, ast):
+        def line (fmt, *args):
+            stream.write (fmt.format (*args) + "\n")
+        def line_proc_expr_construct (s, name):
+            line ("{} ({}) {{ {} }}", name, " ".join (s.procs), self.or_expr (s.expr))
+
+        if ast.size_proc is not None:
+            line ("number_procs {}", ast.size_proc)
+        for t in ast.types:
+            if t.enum is not None:
+                line ("type {} = {}", t.name, " | ".join (t.enum));
+            else:
+                line ("type {}", t.name)
+        for d in ast.decls:
+            line ("{} {} : {}", d.kind, self.ref (d.name), d.typename)
+        line_proc_expr_construct (ast.init, "init")
+        for i in ast.invariants:
+            line_proc_expr_construct (i, "invariant")
+        for u in ast.unsafes:
+            line_proc_expr_construct (u, "unsafe")
+        for t in ast.transitions:
+            line ("transition {} ({})", t.name, " ".join (t.procs))
+            if t.require is not None:
+                line ("\trequires {{ {} }}", self.or_expr (t.require))
+            line ("{{")
+            for u in t.updates:
+                if u.rhs.switch is not None:
+                    line ("\t{} := case", self.ref (u.lhs))
+                    for c in u.rhs.switch:
+                        if c.cond == "_":
+                            line ("\t\t| _ : {}", self.expr (c.expr))
+                        else:
+                            line ("\t\t| {} : {}", self.and_expr (c.cond), self.expr (c.expr))
+                    line ("\t;")
+                if u.rhs.expr is not None:
+                    line ("\t{} := {};", self.ref (u.lhs), self.expr (u.rhs.expr))
+                if u.rhs.rand is not None:
+                    line ("\t{} := ?;", self.ref (u.lhs))
+            line ("}}")
+
+# Exported template engine class
 class TemplateEngine:
     """ Main template class. init with template, and run with data and output stream """ 
     def __init__ (self, cin):
         parser = cubicle_parser.CubicleParser (parseinfo = True)
-        buf = CubicleCommentBuffer (cin.read ())
+        buf = CubicleBuffer (cin.read ())
         self.ast = parser.parse (buf, "model")
 
     def run (self, cout, data):
-        self.output_ast (cout, self.substitute (data))
+        AstPrinterExpanded ().write (cout, self.substitute (data))
 
     def substitute (self, data):
         """
@@ -55,19 +159,12 @@ class TemplateEngine:
         Checks for malformed names
         Removes malformed statements due to empty-set iterations
         """
+        # Utils
         NAME_FORMAT = re.compile ("^[A-Za-z][A-Za-z0-9_]*$")
-
         def line (node):
             return node.parseinfo.buffer.line_info (node.parseinfo.pos).line + 1
-        def template_str (t):
-            if t.arg is not None: return t.arg
-            if t.key_ref is not None: return t.key_ref
-            if t.field_ref is not None: return "{}.{}".format (t.field_ref.key, t.field_ref.field)
-        def template_name_str (t_name):
-            name_parts = t_name[:]
-            name_parts[1::2] = map (template_str, name_parts[1::2]) # pretty print templates
-            return "@".join (name_parts) 
 
+        # Ast manipulation
         def alter (node, **kwargs):
             """ copy and update AST node with new args """
             new = dict (node)
@@ -88,6 +185,33 @@ class TemplateEngine:
             """ Removes None's elements in a list, and returns None if empty """
             cleaned = [e for e in l if e is not None]
             return cleaned if len (cleaned) > 0 or keep_list else None
+
+        # Template condition evaluation
+        def eval_cond (cond, instance):
+            def not_allowed (what):
+                raise TemplateError ("{} are not allowed in condition".format (what))
+            def eval_ref (s):
+                if s.array is not None: not_allowed ("arrays")
+                if s.var is not None: return s.var.name
+            def eval_rvalue (v):
+                if v.ref is not None: return eval_ref (v.ref)
+                if v.const is not None: return v.const
+            def eval_expr (e):
+                if e.val is not None: return rvalue (e.val)
+                if e.op is not None: not_allowed ("+/- operations")
+            def eval_comp_expr (c):
+                try: func = { "=": operator.eq, "<>": operator.ne }[c.op]
+                except KeyError: not_allowed ("{} operations".format (c.op)) 
+                return func (eval_expr (c.lhs), eval_expr (c.rhs))
+            def eval_bool_expr (e):
+                if e.forall is not None: not_allowed ("forall constructs")
+                if e.comp is not None: return eval_comp_expr (e.comp)
+            def eval_and_expr (a):
+                return all (map (eval_bool_expr, a))
+            def eval_or_expr (o):
+                return any (map (eval_and_expr, o))
+            expanded_cond = gen_or_expr (cond, instance)
+            return expanded_cond is None or eval_or_expr (expanded_cond) 
 
         # Template substitution
         def expand_template (t, instance):
@@ -147,8 +271,9 @@ class TemplateEngine:
                         for tail in instance_generator_rec (t_list[1:], inst + head):
                             yield head + tail
             for sub_instance in instance_generator_rec ([] if node.template is None else node.template, instance):
-                # TODO cond
-                yield instance + sub_instance
+                complete_instance = instance + sub_instance
+                if node.cond is None or eval_cond (node.cond, complete_instance):
+                    yield complete_instance
         
         def gen_name (name_elements, instance):
             try:
@@ -186,7 +311,6 @@ class TemplateEngine:
             if e.forall is not None: return alter_f (e, instance, forall = gen_forall_expr)
             if e.comp is not None: return alter_f (e, instance, comp = gen_comp_expr)
         def gen_and_expr (a, instance):
-            # expand and template iterators
             generated = []
             for and_elem in a:
                 if and_elem.expr is not None:
@@ -196,7 +320,6 @@ class TemplateEngine:
                         generated.extend (gen_and_expr (and_elem.template.expr, new))
             return simplify (generated)
         def gen_or_expr (o, instance):
-            # expand or template iterators
             generated = []
             for or_elem in o:
                 if or_elem.expr is not None:
@@ -300,69 +423,4 @@ class TemplateEngine:
         if new_ast.transitions is None:
             raise TemplateError ("no transition statement")
         return new_ast
-
-    def output_ast (self, stream, ast):
-        """ Generate cubicle code for template-substituted ast """
-        def write (fmt, *args):
-            stream.write (fmt.format (*args) + "\n")
-
-        def ref (s):
-            if s.array is not None: return s.array.name + "[" + ", ".join (s.array.index) + "]"
-            if s.var is not None: return s.var.name
-        def rvalue (v):
-            if v.ref is not None: return ref (v.ref)
-            if v.const is not None: return v.const
-        def expr (e):
-            if e.val is not None: return rvalue (e.val)
-            if e.op is not None: return "{} {} {}".format (rvalue (e.lhs), e.op, rvalue (e.rhs))
-        def comp_expr (c):
-            return "{} {} {}".format (expr (c.lhs), c.op, expr (c.rhs))
-        def forall_expr (f):
-            if f.comp is not None: return "forall_other {}. {}".format (f.name, comp_expr (f.comp))
-            if f.expr is not None: return "forall_other {}. ({})".format (f.name, or_expr (f.expr))
-        def bool_expr (e):
-            if e.forall is not None: return forall_expr (e.forall)
-            if e.comp is not None: return comp_expr (e.comp)
-        # here and/or expr are plain lists
-        def and_expr (a):
-            return " && ".join (bool_expr (e) for e in a)
-        def or_expr (o):
-            return " || ".join (and_expr (a) for a in o)
-
-        def write_proc_expr_construct (s, name):
-            write ("{} ({}) {{ {} }}", name, " ".join (s.procs), or_expr (s.expr))
-
-        if ast.size_proc is not None:
-            write ("number_procs {}", ast.size_proc)
-        for t in ast.types:
-            if t.enum is not None:
-                write ("type {} = {}", t.name, " | ".join (t.enum));
-            else:
-                write ("type {}", t.name)
-        for d in ast.decls:
-            write ("{} {} : {}", d.kind, ref (d.name), d.typename)
-        write_proc_expr_construct (ast.init, "init")
-        for i in ast.invariants:
-            write_proc_expr_construct (i, "invariant")
-        for u in ast.unsafes:
-            write_proc_expr_construct (u, "unsafe")
-        for t in ast.transitions:
-            write ("transition {} ({})", t.name, " ".join (t.procs))
-            if t.require is not None:
-                write ("\trequires {{ {} }}", or_expr (t.require))
-            write ("{{")
-            for u in t.updates:
-                if u.rhs.switch is not None:
-                    write ("\t{} := case", ref (u.lhs))
-                    for c in u.rhs.switch:
-                        if c.cond == "_":
-                            write ("\t\t| _ : {}", expr (c.expr))
-                        else:
-                            write ("\t\t| {} : {}", and_expr (c.cond), expr (c.expr))
-                    write ("\t;")
-                if u.rhs.expr is not None:
-                    write ("\t{} := {};", ref (u.lhs), expr (u.rhs.expr))
-                if u.rhs.rand is not None:
-                    write ("\t{} := ?;", ref (u.lhs))
-            write ("}}")
 

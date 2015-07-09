@@ -102,7 +102,7 @@ array_index = @+:template_name {',' ~ @+:template_name} ;
 var_ref = name:template_name ;
 
 # template
-template_args = '@' @+:template {',' ~ @+:template} '@' ; # add condition ?
+template_args = '@' @+:template {',' ~ @+:template} ['|' ~ cond:or_expr] '@' ;
 template_name = @+:/\w*/ {/@/ ~ @+:template '@' ~ @+:/\w*/}* ; # explicit regexp to avoid whitespace in names
 template = arg:name | field_ref:template_field_ref | key_ref:int ;
 template_field_ref = key:int '.' ~ field:name ;
