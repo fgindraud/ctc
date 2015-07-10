@@ -87,8 +87,8 @@ class CommonExprPrinter:
     def comp_expr (self, c):
         return "{} {} {}".format (self.expr (c.lhs), c.op, self.expr (c.rhs))
     def forall_expr (self, f):
-        if f.comp is not None: return "forall_other {}. {}".format (f.name, self.comp_expr (f.comp))
-        if f.expr is not None: return "forall_other {}. ({})".format (f.name, self.or_expr (f.expr))
+        if f.comp is not None: return "forall_other {}. {}".format (f.proc, self.comp_expr (f.comp))
+        if f.expr is not None: return "forall_other {}. ({})".format (f.proc, self.or_expr (f.expr))
     def bool_expr (self, e):
         if e.forall is not None: return self.forall_expr (e.forall)
         if e.comp is not None: return self.comp_expr (e.comp)
@@ -269,13 +269,16 @@ class TemplateInstanceGenerator:
             yield context
             return
 
-        def normalize (key, dict_ = {}):
+        def normalize (key, value = None):
             """
             Normalize a template iterable element to a dict with:
-            - element keys + _key=element_name if iterable was a dict
+            - element keys + _key=element_name if iterable was a dict and element was a dict
+            - val=element + _key=element_name if only iterable was a dict
             - _key=element if iterable was a list
             """
-            normalized = dict (dict_)
+            if value is None: normalized = dict ()
+            elif isinstance (value, collections.Mapping): normalized = dict (value)
+            else: normalized = dict (value = value)
             normalized["_key"] = key
             return normalized
 

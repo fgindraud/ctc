@@ -1,7 +1,7 @@
 # Template elements :
 # * <str> -> iter on top-level elements of data
 # * <int n> -> n-th template argument in the stack
-# * <int n>.<str> -> str field of n-th argument in the stack
+# * <int n>.<str> -> str field of n-th argument in the stack ("value" can be used if iterable contains only simple values, not a dict)
 
 # Template substitution: @ <template_element> @
 # -> Used in a name to be substituted by the instance element value
