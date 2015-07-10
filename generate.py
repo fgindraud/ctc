@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from template import CubicleTemplateCompiler, TemplateError
+import ctc
 import sys
 
 data = {
@@ -26,6 +26,6 @@ data = {
         "Regions": range (1)
         }
 
-try: CubicleTemplateCompiler (sys.stdin).run (sys.stdout, data)
-except TemplateError as e: print ("TemplateError: {}".format (e), file=sys.stderr)
+try: ctc.CubicleTemplateCompiler (sys.stdin).run (sys.stdout, data)
+except ctc.Error as e: print ("ctc: {}".format (e), file=sys.stderr)
 

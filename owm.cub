@@ -27,12 +27,13 @@ array @Regions @ Reg_@0@_Valid[proc] : bool (* has valid data *)
 array @Regions @ Reg_@0@_Request[proc] : bool (* node sent a pending request *)
 array @Regions @ Reg_@0@_Data[proc] : data (* local copy *)
 
-var @Regions @ Reg_@0@_Owner : proc (* seen by all FIXME *)
-array @Regions @ Reg_@0@_Vs[proc] : valid_set_state (* owner-only by node array *)
+		(* global structures, simplification over replication in the real case FIXME *)
+var @Regions @ Reg_@0@_Owner : proc
+array @Regions @ Reg_@0@_Vs[proc] : valid_set_state (* valid set ; never contains owner *)
 
-init (x owner) {
-	Sq[x] = Msg_Empty &&
-	Rq[x] = Msg_Empty &&
+init (node) {
+	Sq[node] = Msg_Empty &&
+	Rq[node] = Msg_Empty &&
 	(* RecvFrom will be updated when msg arrive *)
 
 	@Tasks @ (&& Task_@0@_State = TS_Created) &&
@@ -40,16 +41,16 @@ init (x owner) {
 	
 	(* RegOwner unset *)
 	@Regions @ (&&
-		Reg_@0@_Valid[x] = False && 
-		Reg_@0@_Request[x] = False &&
-		Reg_@0@_Vs[x] = Invalid
+		Reg_@0@_Valid[node] = False && 
+		Reg_@0@_Request[node] = False &&
+		Reg_@0@_Vs[node] = Invalid
 	)
 }
 
-unsafe @Tasks @ (n) {
+unsafe @Tasks @ (node) {
 	@0.accesses | @1.mode@ = RW || @1.mode@ = RO @ (||
 		(* Fail if one of the dep accesses doesn't read what it expects *)
-		Task_@0@_State = TS_Running && Reg_@1@_Data[n] <> @1.read@
+		Task_@0@_State = TS_Running && Task_@0@_Node = node && Reg_@1@_Data[node] <> @1.read@
 	)
 }
 
@@ -57,113 +58,114 @@ unsafe @Tasks @ (n) {
 Place data in Sq (send queue), set target in SendTo
 Not affected by init
 *)
-transition transmit_msg (n to)
+transition transmit_msg (from to)
 	requires {
-		Sq[n] <> Msg_Empty &&
-		SendTo[n] = to && Rq[to] = Msg_Empty
+		Sq[from] <> Msg_Empty &&
+		SendTo[from] = to && Rq[to] = Msg_Empty
 	}
 {
-	Sq[n] := Msg_Empty;
-	Rq[to] := Sq[n];
-	RqData[to] := SqData[n];
-	RecvFrom[to] := n;
+	Sq[from] := Msg_Empty;
+	Rq[to] := Sq[from];
+	RqData[to] := SqData[from];
+	RecvFrom[to] := from;
 }
 
 (* Protocol handling *)
 
 (*transition forward_Data_Req (n from) TODO distributed owner*)
 
-transition @Regions @ r@0@_handle_Data_Req (n from)
+transition @Regions @ r@0@_handle_Data_Req (node from)
 	requires {
-		Rq[n] = Msg_DataReq_@0@ && RecvFrom[n] = from &&
-		Sq[n] = Msg_Empty
+		Rq[node] = Msg_DataReq_@0@ && RecvFrom[node] = from &&
+		Sq[node] = Msg_Empty
 	}
 { 
-	Rq[n] := Msg_Empty;
+	Rq[node] := Msg_Empty;
 
 	Reg_@0@_Vs[from] := Valid;
 
-	Sq[n] := Msg_DataAns_@0@;
-	SqData[n] := Reg_@0@_Data[n];
-	SendTo[n] := from;
+	Sq[node] := Msg_DataAns_@0@;
+	SqData[node] := Reg_@0@_Data[node];
+	SendTo[node] := from;
 }
 
-transition @Regions @ r@0@_handle_Data_Ans (n from)
+transition @Regions @ r@0@_handle_Data_Ans (node from)
 	requires {
-		Rq[n] = Msg_DataAns_@0@ && RecvFrom[n] = from
+		Rq[node] = Msg_DataAns_@0@ && RecvFrom[node] = from
 	}
 {
-	Rq[n] := Msg_Empty;
+	Rq[node] := Msg_Empty;
 
-	Reg_@0@_Valid[n] := True;
-	Reg_@0@_Data[n] := RqData[n];
-	Reg_@0@_Request[n] := False;
+	Reg_@0@_Valid[node] := True;
+	Reg_@0@_Data[node] := RqData[node];
+	Reg_@0@_Request[node] := False;
 }
 
 (*transition forward_Own_Req(n from to)*)
 
-transition @Regions @ r@0@_handle_Owner_Req (n from)
+transition @Regions @ r@0@_handle_Owner_Req (node from)
 	requires {
-		Rq[n] = Msg_OwnReq_@0@ && RecvFrom[n] = from &&
-		Sq[n] = Msg_Empty
+		Rq[node] = Msg_OwnReq_@0@ && RecvFrom[node] = from &&
+		Sq[node] = Msg_Empty
 	}
 { 
-	Rq[n] := Msg_Empty;
+	Rq[node] := Msg_Empty;
 
 	(* cannot remove ownership in two parts (only 1 global RegOwner pointer). Will be done in transfer *)
 
-	Sq[n] := Msg_OwnTrans_@0@;
-	SqData[n] := Reg_@0@_Data[n];
-	SendTo[n] := from;
+	Sq[node] := Msg_OwnTrans_@0@;
+	SqData[node] := Reg_@0@_Data[node];
+	SendTo[node] := from;
 }
 
-transition @Regions @ r@0@_handle_Owner_Transfer (n from)
+transition @Regions @ r@0@_handle_Owner_Transfer (node from)
 	requires {
-		Rq[n] = Msg_OwnTrans_@0@ && RecvFrom[n] = from
+		Rq[node] = Msg_OwnTrans_@0@ && RecvFrom[node] = from
 	}
 {
-	Rq[n] := Msg_Empty;
+	Rq[node] := Msg_Empty;
 
-	Reg_@0@_Owner := n;
-	Reg_@0@_Valid[n] := True;
-	Reg_@0@_Data[n] := RqData[n];
-	Reg_@0@_Request[n] := False;
-
+	Reg_@0@_Owner := node;
 	Reg_@0@_Vs[i] := case
-		| i = n : Invalid
+		| i = node : Invalid
 		| i = from : Valid (* should be done in Msg_OwnReq when Owner is decoupled *)
 		| _ : Reg_@0@_Vs[i];
+
+	Reg_@0@_Valid[node] := True;
+	Reg_@0@_Data[node] := RqData[node];
+	Reg_@0@_Request[node] := False;
+
 }
 
-transition @Regions @ r@0@_handle_Inv_Req (n from)
+transition @Regions @ r@0@_handle_Inv_Req (node from)
 	requires {
-		Rq[n] = Msg_InvReq_@0@ && RecvFrom[n] = from &&
-		Sq[n] = Msg_Empty
+		Rq[node] = Msg_InvReq_@0@ && RecvFrom[node] = from &&
+		Sq[node] = Msg_Empty
 	}
 {
-	Rq[n] := Msg_Empty;
+	Rq[node] := Msg_Empty;
 
-	Reg_@0@_Valid[n] := False;
+	Reg_@0@_Valid[node] := False;
 		
-	Sq[n] := Msg_InvAck_@0@;
-	SendTo[n] := from;
+	Sq[node] := Msg_InvAck_@0@;
+	SendTo[node] := from;
 }
 
-transition @Regions @ r@0@_handle_Inv_Ack (n from)
+transition @Regions @ r@0@_handle_Inv_Ack (node from)
 	requires {
-		Rq[n] = Msg_InvAck_@0@ && RecvFrom[n] = from
+		Rq[node] = Msg_InvAck_@0@ && RecvFrom[node] = from
 	}
 {
-	Rq[n] := Msg_Empty;
+	Rq[node] := Msg_Empty;
 	
 	Reg_@0@_Vs[from] := Invalid;
 }
 
 (* Task State transitions *)
 
-transition @Tasks @ t@0@_becomes_eligible (n) 
+transition @Tasks @ t@0@_becomes_eligible (node) 
 	requires {
-		Task_@0@_State = TS_Created && Task_@0@_Node = n &&
+		Task_@0@_State = TS_Created && Task_@0@_Node = node &&
 		@0.dep@ (&& Task_@1@_State = TS_Finished)
 	}
 {
@@ -178,81 +180,83 @@ transition @Tasks @ t@0@_move (from to)
 	Task_@0@_Node := to;
 }		
 
-transition @Tasks @ t@0@_starts_caching (n)
+transition @Tasks @ t@0@_starts_caching (node)
 	requires {
-		Task_@0@_State = TS_Eligible && Task_@0@_Node = n
+		Task_@0@_State = TS_Eligible && Task_@0@_Node = node
 	}
 {
 	Task_@0@_State := TS_Caching;
 }
 
-transition @Tasks, 0.accesses | @1.mode@ = RO @ t@0@_r@1@_trigger_data_req (n)
+transition @Tasks, 0.accesses | @1.mode@ = RO @ t@0@_r@1@_trigger_data_req (node)
 	requires {
-		Task_@0@_State = TS_Caching && Task_@0@_Node = n &&
-		Reg_@1@_Valid[n] = False && Reg_@1@_Request[n] = False &&
-		Sq[n] = Msg_Empty
+		Task_@0@_State = TS_Caching && Task_@0@_Node = node &&
+		Reg_@1@_Valid[node] = False && Reg_@1@_Request[node] = False &&
+		Sq[node] = Msg_Empty
 	}
 {
-	Reg_@1@_Request[n] := True;
+	Reg_@1@_Request[node] := True;
 
-	Sq[n] := Msg_DataReq_@1@;
-	SendTo[n] := Reg_@1@_Owner;
+	Sq[node] := Msg_DataReq_@1@;
+	SendTo[node] := Reg_@1@_Owner;
 }
 
-transition @Tasks, 0.accesses | @1.mode@ = RW @ t@0@_r@1@_trigger_own_req (n)
+transition @Tasks, 0.accesses | @1.mode@ = RW @ t@0@_r@1@_trigger_own_req (node)
 	requires {
-		Task_@0@_State = TS_Caching && Task_@0@_Node = n &&
-		Reg_@1@_Owner <> n && Reg_@1@_Request[n] = False &&
-		Sq[n] = Msg_Empty
+		Task_@0@_State = TS_Caching && Task_@0@_Node = node &&
+		Reg_@1@_Owner <> node && Reg_@1@_Request[node] = False &&
+		Sq[node] = Msg_Empty
 	}
 {
-	Reg_@1@_Request[n] := True;
+	Reg_@1@_Request[node] := True;
 
-	Sq[n] := Msg_OwnReq_@1@;
-	SendTo[n] := Reg_@1@_Owner;
+	Sq[node] := Msg_OwnReq_@1@;
+	SendTo[node] := Reg_@1@_Owner;
 }
 
 (* start to run *)
-transition @Tasks @ t@0@_starts_running (n)
+transition @Tasks @ t@0@_starts_running (node)
 	requires {
-		Task_@0@_State = TS_Caching && Task_@0@_Node = n &&
+		Task_@0@_State = TS_Caching && Task_@0@_Node = node &&
 		(* Do not wait for C *)
-		@0.accesses | @1.mode@ = RW @ (&& n = Reg_@1@_Owner) &&
-		@0.accesses | @1.mode@ = RO @ (&& Reg_@1@_Valid[n] = True)
+		@0.accesses | @1.mode@ = RW @ (&& node = Reg_@1@_Owner) &&
+		@0.accesses | @1.mode@ = RO @ (&& Reg_@1@_Valid[node] = True)
 	}
 {
 	Task_@0@_State := TS_Running;
 }
 
 (* stop running *)
-transition @Tasks @ t@0@_stop_running (n)
+transition @Tasks @ t@0@_stop_running (node)
 	requires {
-		Task_@0@_State = TS_Running && Task_@0@_Node = n
+		Task_@0@_State = TS_Running && Task_@0@_Node = node
 	}
 {
-	@0.accesses | @1.mode@ = RW || @1.mode@ = C @ (;
-		Reg_@1@_Data[n] := D_@0@;
-		Reg_@1@_Valid[n] := True;
+	@0.accesses | @1.mode@ = RW @ (; Reg_@1@_Data[node] := D_@0@);
+	@0.accesses | @1.mode@ = C @ (;
+		Reg_@1@_Data[node] := D_@0@;
+		Reg_@1@_Valid[node] := True;
+		Reg_@1@_Owner := node
 	);
 	Task_@0@_State := TS_Publishing;
 }
 
-transition @Tasks, 0.accesses | @1.mode@ = RW @ t@0@_r@1@_trigger_inv_req (n remote)
+transition @Tasks, 0.accesses | @1.mode@ = RW @ t@0@_r@1@_trigger_inv_req (node remote)
 	requires {
-		Task_@0@_State = TS_Publishing && Task_@0@_Node = n &&
+		Task_@0@_State = TS_Publishing && Task_@0@_Node = node &&
 		Reg_@1@_Vs[remote] = Valid &&
-		Sq[n] = Msg_Empty
+		Sq[node] = Msg_Empty
 	}
 {
 	Reg_@1@_Vs[remote] := WaitingInvAck;
 
-	Sq[n] := Msg_InvReq_@1@;
-	SendTo[n] := remote;
+	Sq[node] := Msg_InvReq_@1@;
+	SendTo[node] := remote;
 }
 
-transition @Tasks @ t@0@_publishing_complete (n)
+transition @Tasks @ t@0@_publishing_complete (node)
 	requires {
-		Task_@0@_State = TS_Publishing && Task_@0@_Node = n &&
+		Task_@0@_State = TS_Publishing && Task_@0@_Node = node &&
 		@0.accesses | @1.mode@ = RW @ (&& forall_other m. (Reg_@1@_Vs[m] = Invalid))
 	}
 {

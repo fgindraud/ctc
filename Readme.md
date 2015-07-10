@@ -28,6 +28,6 @@ The template language is described in _cubicle.ebnf_, as a grammar but also with
 Cubicle templates closely follows cubicle's syntax, while adding some template constructs delimited by '@' characters.
 _owm.cub_ provides an example on how to use it to generate a cubicle file for our cache coherence protocol.
 
-_generate.py_ reads a cubicle template file on its stdin, and calls the _template.py_ functions on its internal data structure to generate the cubicle file, which is then printed on stdout.
+_generate.py_ reads a cubicle template file on its stdin, and calls the _ctc.py_ functions on its internal data structure to generate the cubicle file, which is then printed on stdout.
 It provides an example of how to use the template substitution functions, and how to encode fixed sizes structures as python dict/list.
 

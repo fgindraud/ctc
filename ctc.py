@@ -1,20 +1,33 @@
-#!/usr/bin/env python
+# Copyright (c) 2015 Francois GINDRAUD
+# 
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+# 
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import sys
 import collections
 import re
 import operator
 
-# Get grako libraries
-try:
-    import grako.buffering
-    import grako.exceptions
-    import grako.ast
-except ImportError:
-    sys.stderr.write ("grako python module not found, please install it\n")
-    raise
+import grako.buffering
+import grako.exceptions
+import grako.ast
 
-# Generate the parser if not found
 try:
     import cubicle_parser
 except ImportError:
@@ -22,7 +35,7 @@ except ImportError:
     os.system ("python -m grako -m Cubicle -o cubicle_parser.py cubicle.ebnf")
     import cubicle_parser
 
-__all__ = ["CubicleTemplateCompiler", "TemplateError"]
+__all__ = ["CubicleTemplateCompiler"]
 
 # Utils
 NAME_FORMAT = re.compile ("^[A-Za-z][A-Za-z0-9_]*$")
@@ -30,7 +43,7 @@ NAME_FORMAT = re.compile ("^[A-Za-z][A-Za-z0-9_]*$")
 def line_number (ast_node):
     return ast_node.parseinfo.buffer.line_info (ast_node.parseinfo.pos).line + 1
 
-class TemplateError (Exception):
+class Error (Exception):
     pass
 
 def alter (node, **kwargs):
@@ -177,7 +190,7 @@ class ExpandedAstPrinter (ExpandedExprPrinter):
 # Text evaluation
 class ExpandedExprTextEval:
     def not_allowed (self, what):
-        raise TemplateError ("{} are not allowed in text evaluation".format (what))
+        raise Error ("{} are not allowed in text evaluation".format (what))
 
     def ref (self, s):
         if s.array is not None: self.not_allowed ("arrays")
@@ -226,23 +239,23 @@ class TemplateInstanceGenerator:
         try:
             if tpl.arg is not None:
                 try: return self.data[tpl.arg]
-                except TypeError: raise TemplateError ("wrong data format")
-                except KeyError: raise TemplateError ("name {} not found in input data".format (tpl.arg))
+                except TypeError: raise Error ("wrong data format")
+                except KeyError: raise Error ("name {} not found in input data".format (tpl.arg))
             def get_ref (index, field = "_key"):
                 try:
                     n = int (index)
                     return context[n][field]
                 except IndexError:
-                    raise TemplateError ("index {} undefined (defined = {})".format (
+                    raise Error ("index {} undefined (defined = {})".format (
                         index, list (range (len (context)))))
                 except KeyError:
-                    raise TemplateError ("field {} not found in context {}".format (field, context[n]))
+                    raise Error ("field {} not found in context {}".format (field, context[n]))
             if tpl.key_ref is not None:
                 return get_ref (tpl.key_ref)
             if tpl.field_ref is not None:
                 return get_ref (tpl.field_ref.key, tpl.field_ref.field)
-        except TemplateError as e:
-            raise TemplateError ("line {}: in template {}: {}".format (
+        except Error as e:
+            raise Error ("line {}: in template {}: {}".format (
                 line_number (tpl), self.tep.template (tpl), e))
             
     def name (self, name_parts, context):
@@ -251,10 +264,10 @@ class TemplateInstanceGenerator:
             expanded = [self.expand (tpl, context) for tpl in name_parts[1::2]]
             name = fmt.format (*expanded)
             if not NAME_FORMAT.match (name):
-                raise TemplateError ("malformed: {}".format (name))
+                raise Error ("malformed: {}".format (name))
             return name
-        except TemplateError as e:
-            raise TemplateError ("in name {}: {}".format (self.tep.name (name_parts), e))
+        except Error as e:
+            raise Error ("in name {}: {}".format (self.tep.name (name_parts), e))
     
     # Template instantiation
     def instances (self, tpl_decl, context):
@@ -295,7 +308,7 @@ class TemplateInstanceGenerator:
             elif isinstance (iterable, collections.Iterable):
                 iterable = [normalize (k) for k in iterable]
             else: 
-                raise TemplateError ("line {}: in template {}: expanded value is not iterable: {}".format (
+                raise Error ("line {}: in template {}: expanded value is not iterable: {}".format (
                     line_number (tpl), self.tep.template (tpl), iterable))
             # generate sub_instances (make order predictable)
             iterable.sort (key = lambda e: e["_key"])
@@ -389,7 +402,7 @@ class TemplateEngine:
         generated = []
         for c in s:
             if c.case is not None:
-                generated.append (self.case (c, ctx))
+                generated.append (self.case (c.case, ctx))
             if c.template is not None:
                 for instance in self.ig.instances (c.template.decl, ctx):
                     generated.extend (self.switch (c.template.case_list, instance))

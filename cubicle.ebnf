@@ -78,10 +78,10 @@ update_template = decl:template_decl '(' ';' ~ updates:transition_update_list ')
 transition_assign = lhs:ref ':=' ~ rhs:transition_rvalue ;
 transition_rvalue = switch:switch_case | expr:expr | rand:('.' | '?') ;
 switch_case = 'case' ~ @:case_list ;
-case_list = {@+:case}+ ;
+case_list = {'|' ~ @+:case_elem}+ ;
 case_elem = template:case_template | case:case ;
-case_template = decl:template_decl '(' '|' ~ case_list:case_list ')' ;
-case = '|' ~ cond:('_' | and_expr) ':' ~ expr:expr ;
+case_template = decl:template_decl '(' ~ case_list:case_list ')' ;
+case = cond:('_' | and_expr) ':' ~ expr:expr ;
 
 # expressions
 
