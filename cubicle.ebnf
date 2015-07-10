@@ -94,7 +94,7 @@ and_elem = template:and_template | expr:bool_expr ;
 and_template = decl:template_decl '(' '&&' ~ expr:and_expr ')' ;
 
 bool_expr = forall:forall_expr | comp:comp_expr ;
-forall_expr = 'forall_other' ~ proc:name '.' (comp:comp_expr | '(' expr:or_expr ')') ;
+forall_expr = 'forall_other' ~ proc:name '.' ~ (comp:comp_expr | '(' ~ expr:or_expr ')') ;
 comp_expr = lhs:expr op:('=' | '<>' | '<=' | '<') ~ rhs:expr ;
 expr = lhs:rvalue op:('+' | '-') ~ rhs:rvalue | val:rvalue ;
 rvalue = const:const | ref:ref ;
