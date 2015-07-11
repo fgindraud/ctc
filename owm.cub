@@ -1,13 +1,13 @@
 (* Use of templates *)
 
 type msg = Msg_Empty | @Regions @ (| Msg_DataReq_@0@ | Msg_DataAns_@0@ | Msg_OwnReq_@0@ | Msg_OwnTrans_@0@ | Msg_InvReq_@0@ | Msg_InvAck_@0@)
-type task_state = TS_Created | TS_Eligible | TS_Caching | TS_Running | TS_Publishing | TS_DepSolving | TS_Finished | TS_Empty
+type task_state = TS_Created | (*TS_Eligible |*) TS_Caching | TS_Running | TS_Publishing | TS_Finished
 
 type valid_set_state = Valid | WaitingInvAck | Invalid
 
 type data = D_Init | @Tasks @ (| D_@0@ )
 (* Mode is unused, as all info is stored in the template system. It is kept as documentation of enum. *)
-type mode = C (* create == RW without deps *) | RO | RW
+type mode = C (* create == RW without deps *) | RO | RW | NU
 
 (* network, proc = node *)
 array Sq[proc] : msg
@@ -163,26 +163,10 @@ transition @Regions @ r@0@_handle_Inv_Ack (node from)
 
 (* Task State transitions *)
 
-transition @Tasks @ t@0@_becomes_eligible (node) 
+transition @Tasks @ t@0@_becomes_eligible_starts_caching (node) 
 	requires {
 		Task_@0@_State = TS_Created && Task_@0@_Node = node &&
 		@0.dep@ (&& Task_@1@_State = TS_Finished)
-	}
-{
-	Task_@0@_State := TS_Eligible;
-}
-
-transition @Tasks @ t@0@_move (from to)
-	requires {
-		Task_@0@_State = TS_Eligible && Task_@0@_Node = from
-	}
-{
-	Task_@0@_Node := to;
-}		
-
-transition @Tasks @ t@0@_starts_caching (node)
-	requires {
-		Task_@0@_State = TS_Eligible && Task_@0@_Node = node
 	}
 {
 	Task_@0@_State := TS_Caching;
@@ -262,8 +246,4 @@ transition @Tasks @ t@0@_publishing_complete (node)
 {
 	Task_@0@_State := TS_Finished;
 }
-
-(*transition trigger_local_tdec*)
-(*transition trigger_remote_tdec*)
-(*transition handle_perform_tdec*)
 

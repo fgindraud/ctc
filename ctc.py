@@ -32,7 +32,16 @@ try:
     import cubicle_parser
 except ImportError:
     import os
-    os.system ("python -m grako -m Cubicle -o cubicle_parser.py cubicle.ebnf")
+    import inspect
+    class Dummy:
+        pass
+    module_path = os.path.dirname (inspect.getfile (Dummy))
+    generate_parser_cmd = "{} -m grako -m Cubicle -o {} {}".format (
+            sys.executable,
+            os.path.join (module_path, "cubicle_parser.py"),
+            os.path.join (module_path, "cubicle.ebnf"))
+    print (generate_parser_cmd, file = sys.stderr)
+    os.system (generate_parser_cmd)
     import cubicle_parser
 
 __all__ = ["CubicleTemplateCompiler"]
