@@ -1,0 +1,23 @@
+{
+    "Regions": [ 0, 1 ],
+    "Tasks": {
+        "A": {
+            "accesses": {
+                "0": { "mode": "C" }
+            },
+            "dep": []
+        },
+        "B": {
+            "accesses": {
+                "0": { "read": "D_A", "mode": "RW" }
+            },
+            "dep": [ "A" ]
+        },
+        "C": {
+            "accesses": {
+                "0": { "read": "D_B", "mode": "RO" }
+            },
+            "dep": [ "B" ]
+        }
+    }
+}

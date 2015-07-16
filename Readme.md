@@ -7,27 +7,48 @@ Why
 ---
 
 Cubicle is good for checking models with arrays of arbitrary and variable size.
-However it is tedious to describe fixed size structures (especially with possibly complex relations between them).
-A motivating example is our cache coherence protocol, which is linked to a task graph.
+However it is tedious to describe fixed size structures.
+In particular, properties between multiple elements of these structures might require the forall_other construct, which might throw false positives.
+Duplicating rules can solve these problems, at the cost of generality however.
 
-Requirements 
+**ctc** also adds support for nicer syntax, like nested OR.
+
+Installation
 ------------
 
 Software dependencies:
 
 	python 3
-	grako python library
-	cubicle
+	grako (python 3 library)
+	cubicle (model checker)
 
-If using Vim, _cubicle.vim_ provides syntax coloring
+ctc uses the standard python setuptools for installation (--user for a local install):
 
-How to use
-----------
+	python setup.py install [--user]
 
-The template language is described in _cubicle.ebnf_, as a grammar but also with comments on top.
+If using Vim, `vim/` contains syntax coloring files.
+
+Usage
+-----
+
+A simple frontend script is available after installation.
+It will compile the templates using json data from a file (see `-h` for options), and run cubicle on the compiled file:
+
+	ctc [options] -- [cubicle options]
+	python -m ctc [options] -- [cubicle options]
+
+It can also be used as a python library.
+In this case the data needs to be passed as a hierarchy of Mapping-capable or Iterable objects (dict and list are ok):
+
+	import ctc
+	ctc.Compiler (...).run (...)
+
+Language and Data format
+------------------------
+
+The template language is described in `ctc/cubicle.ebnf`, as a grammar with some comments.
 Cubicle templates closely follows cubicle's syntax, while adding some template constructs delimited by '@' characters.
-_owm.cub_ provides an example on how to use it to generate a cubicle file for our cache coherence protocol.
 
-_generate.py_ reads a cubicle template file on its stdin, and calls the _ctc.py_ functions on its internal data structure to generate the cubicle file, which is then printed on stdout.
-It provides an example of how to use the template substitution functions, and how to encode fixed sizes structures as python dict/list.
+`example/owm` provides an example for a cache coherence protocol linked to a task graph execution model.
+
 
