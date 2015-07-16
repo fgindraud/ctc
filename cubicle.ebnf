@@ -90,7 +90,7 @@ or_elem = template:or_template | expr:and_expr ;
 or_template = decl:template_decl '(' '||' ~ expr:and_expr ')' ;
 
 and_expr = @+:and_elem {'&&' ~ @+:and_elem} ;
-and_elem = template:and_template | expr:bool_expr ;
+and_elem = template:and_template | expr:bool_expr | '(' ~ or_expr:or_expr ')' ;
 and_template = decl:template_decl '(' '&&' ~ expr:and_expr ')' ;
 
 bool_expr = forall:forall_expr | comp:comp_expr ;

@@ -23,6 +23,7 @@ import sys
 import collections
 import re
 import operator
+import itertools
 
 import grako.buffering
 import grako.exceptions
@@ -140,6 +141,7 @@ class TemplateExprPrinter (CommonExprPrinter):
         if e.expr is not None: return self.bool_expr (e.expr)
         if e.template is not None: return "{} (&& {})".format (
                 self.template_decl (e.template.decl), self.and_expr (e.template.expr))
+        if e.or_expr is not None: return "({})".format (self.or_expr (e.or_expr))
     def or_elem (self, e):
         if e.expr is not None: return self.and_expr (e.expr)
         if e.template is not None: return "{} (|| {})".format (
@@ -384,6 +386,7 @@ class TemplateEngine:
     def bool_expr (self, e, ctx):
         if e.forall is not None: return alter_f (e, ctx, forall = self.forall_expr)
         if e.comp is not None: return alter_f (e, ctx, comp = self.comp_expr)
+
     def and_expr (self, a, ctx):
         generated = []
         for and_elem in a:
@@ -392,15 +395,39 @@ class TemplateEngine:
             if and_elem.template is not None:
                 for instance in self.ig.instances (and_elem.template.decl, ctx):
                     generated.extend (self.and_expr (and_elem.template.expr, instance))
+            if and_elem.or_expr is not None:
+                raise Error ("line {}: nested or expression not allowed here: {}".format (
+                    line_number (a), TemplateExprPrinter ().and_expr (a)))
         return simplify (generated)
+    def and_expr_with_nested_or (self, a, ctx):
+        # and expr in context of or_expr ; returns an or_expr (list of and_expr)
+        # instead of single and_expr to support nested or expressions
+        bool_expr_list = []
+        nested_or_exprs = []
+        # templatize and classify and_elements
+        for and_elem in a:
+            if and_elem.expr is not None:
+                bool_expr_list.append (self.bool_expr (and_elem.expr, ctx))
+            if and_elem.template is not None:
+                for instance in self.ig.instances (and_elem.template.decl, ctx):
+                    # Templates will call and_expr_with_nested_or, that returns an or_expr
+                    nested_or_exprs.append (self.and_expr_with_nested_or (and_elem.template.expr, instance))
+            if and_elem.or_expr is not None:
+                nested_or_exprs.append (self.or_expr (and_elem.or_expr, ctx))
+        bool_expr_list = simplify (bool_expr_list, keep_list = True)
+        nested_or_exprs = simplify (nested_or_exprs, keep_list = True)
+        # iterate on all nested_or's and_exprs combinations, combine them with the normal and_expr part
+        return [sum (and_expr_combination_list, bool_expr_list)
+                for and_expr_combination_list in itertools.product (*nested_or_exprs)]
+
     def or_expr (self, o, ctx):
         generated = []
         for or_elem in o:
             if or_elem.expr is not None:
-                generated.append (self.and_expr (or_elem.expr, ctx))
+                generated.extend (self.and_expr_with_nested_or (or_elem.expr, ctx))
             if or_elem.template is not None:
                 for instance in self.ig.instances (or_elem.template.decl, ctx):
-                    generated.append (self.and_expr (or_elem.template.expr, instance))
+                    generated.extend (self.and_expr_with_nested_or (or_elem.template.expr, instance))
         return simplify (generated)
 
     # Transitions
