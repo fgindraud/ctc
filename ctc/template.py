@@ -32,13 +32,14 @@ from .printer import TemplateExprPrinter
 NAME_FORMAT = re.compile ("^[A-Za-z][A-Za-z0-9_]*$")
 
 def line_number (ast_node):
+    """ Returns line number of an ast_node. """
     return ast_node.parseinfo.buffer.line_info (ast_node.parseinfo.pos).line + 1
 
 class Error (Exception):
     pass
 
 def alter (node, **kwargs):
-    """ copy and update AST node with new args """
+    """ Copy and update AST node with provided key=value pairs. """
     new = dict (node)
     new.update (**kwargs)
     return grako.ast.AST (new)
@@ -60,6 +61,12 @@ def simplify (l, keep_list = False):
 
 # Text evaluation
 class ExpandedExprTextEval:
+    """
+    Small class with a collection of functions to evaluate an AST expression.
+    It is used to evaluate template declaration conditions.
+    It is only a text evaluation ; it compares names and not their content.
+    Only supports expanded expressions ; assumes templates have been expanded.
+    """
     def not_allowed (self, what):
         raise Error ("{} are not allowed in text evaluation".format (what))
 
@@ -87,10 +94,9 @@ class ExpandedExprTextEval:
 # Template instance generator
 class TemplateInstanceGenerator:
     """
-    Class to handle template instance generation and template expansion
+    Class to handle template instance generation and template expansion.
 
-    An instance/context is a tuple, elements can be refered to by indexes
-    in templates expressions
+    An instance/context is a tuple, elements can be refered to by indexes in templates expressions.
     """
     def __init__ (self, engine, instances_data):
         self.data = instances_data
@@ -130,6 +136,7 @@ class TemplateInstanceGenerator:
                 line_number (tpl), self.tep.template (tpl), e))
             
     def name (self, name_parts, context):
+        """ Expand a template name. """
         try:
             fmt = "{}".join (name_parts[0::2]) # get name_parts and insert format tokens
             expanded = [self.expand (tpl, context) for tpl in name_parts[1::2]]
@@ -143,10 +150,9 @@ class TemplateInstanceGenerator:
     # Template instantiation
     def instances (self, tpl_decl, context):
         """
-        Returns a generator for sub instances formed from a current instance (context)
-        and a template declaration node.
-        It allows referencing previous index in each declaration.
-        It allows to filter instances with a condition
+        Returns a generator for sub instances formed from a current instance (context) and a template declaration node.
+        Each new parameter can reference all lesser indexes.
+        Generated instances can be filtered with a condition (ExpandedExprTextEval)
         """
         if tpl_decl is None:
             # No template declaration at all, generate one instance with current context
@@ -202,10 +208,16 @@ class TemplateInstanceGenerator:
     
 class TemplateEngine:
     """
-    Generate a new ast with substituted templates
+    Compile the template AST to an expanded AST using the given data.
 
-    Checks for malformed names
-    Removes malformed statements due to empty-set iterations
+    Compilation:
+    * Expands template statements and iterators
+    * Convert extended syntax to conventionnal syntax
+    * Checks for malformed names from the template stage
+    * Removes malformed statements due to empty-set template iterators
+
+    Defines a collection of functions to recursively expand the AST into a new one.
+    Each of these functions follow the prototype <element_name> (<element_node>, <template_context>).
     """
     def __init__ (self, ast):
         self.ast = ast
@@ -222,6 +234,7 @@ class TemplateEngine:
 
     # Propagate in expressions
     def name (self, n, ctx):
+        """ Name expansion is delegated to the TemplateInstanceGenerator. """
         return self.ig.name (n, ctx)
     def index_list (self, il, ctx):
         return simplify ([self.name (n, ctx) for n in il])
@@ -248,6 +261,10 @@ class TemplateEngine:
         if e.comp is not None: return alter_f (e, ctx, comp = self.comp_expr)
 
     def and_expr (self, a, ctx):
+        """
+        AND expression not nested in an OR expr.
+        Will only be flattened in a list of expanded boolean expressions
+        """
         generated = []
         for and_elem in a:
             if and_elem.expr is not None:
@@ -260,11 +277,14 @@ class TemplateEngine:
                     line_number (a), TemplateExprPrinter ().and_expr (a)))
         return simplify (generated)
     def and_expr_with_nested_or (self, a, ctx):
-        # and expr in context of or_expr ; returns an or_expr (list of and_expr)
-        # instead of single and_expr to support nested or expressions
+        """
+        AND expressions nested in an OR expr.
+        Will be converted to a flattened expanded OR expression (list of AND expression).
+        Result is an OR expression to support nested OR expressions that require duplicating the rest of the AND expression.
+        """
+        # templatize and classify and_elements
         bool_expr_list = []
         nested_or_exprs = []
-        # templatize and classify and_elements
         for and_elem in a:
             if and_elem.expr is not None:
                 bool_expr_list.append (self.bool_expr (and_elem.expr, ctx))
@@ -281,6 +301,7 @@ class TemplateEngine:
                 for and_expr_combination_list in itertools.product (*nested_or_exprs)]
 
     def or_expr (self, o, ctx):
+        """ OR expression ; will be flattened to a list of expanded AND expressions. """
         generated = []
         for or_elem in o:
             if or_elem.expr is not None:
@@ -295,6 +316,7 @@ class TemplateEngine:
         if c.cond == '_': return alter_f (c, ctx, expr = self.expr)
         else: return alter_f (c, ctx, cond = self.and_expr, expr = self.expr)
     def switch (self, s, ctx):
+        """ Case list : will flatten case iterators. """
         generated = []
         for c in s:
             if c.case is not None:
@@ -310,6 +332,7 @@ class TemplateEngine:
     def assign (self, u, ctx):
         return alter_f (u, ctx, lhs = self.ref, rhs = self.assign_value)
     def update_list (self, l, ctx):
+        """ Update list : will flatten update iterators. """
         generated = []
         for u in l:
             if u.assign is not None:

@@ -20,7 +20,10 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 class CommonExprPrinter:
-    """ Collections of str(expr) functions independent of expansion """
+    """
+    Collections of printer functions for expression AST nodes that are independent of expansion.
+    These functions take an AST node, and recursively compute the string representation of it.
+    """
     def array (self, a):
         return "{}[{}]".format (self.name (a.name), ", ".join (map (self.name, a.index)))
     def ref (self, s):
@@ -42,51 +45,74 @@ class CommonExprPrinter:
         if e.comp is not None: return self.comp_expr (e.comp)
     
     def and_expr (self, a):
+        """ An AND expression is a list of AND elements, with && operators in between. """
         return " && ".join (map (self.and_elem, a))
     def or_expr (self, o):
+        """ An OR expression is a list of OR elements, with || operators in between. """
         return " || ".join (map (self.or_elem, o))
 
 class TemplateExprPrinter (CommonExprPrinter):
-    """ Collections of str(expr) functions for an ast before expansion """
+    """
+    Collections of printer functions for expression AST nodes before expansion (with templates statements).
+    These functions complete the ones in CommonExprPrinter to support all unexpanded AST expressions.
+    """
     def template (self, t):
+        """ A template element. """
         if t.arg is not None: return t.arg
         if t.key_ref is not None: return t.key_ref
         if t.field_ref is not None: return "{}.{}".format (t.field_ref.key, t.field_ref.field)
     def template_args (self, a):
         return ", ".join (map (self.template, a))
     def template_decl (self, d):
+        """ Unexpanded : template declarations are present in statements and template iterators. """
         if d.cond is not None:
             return "@{} | {}@".format (self.template_args (d.args), self.or_expr (d.cond))
         else: return "@{}@".format (self.template_args (d.args))
-    def name (self, n): # template name
+    def name (self, n):
+        """ Unexpanded : names are interleaved lists of name parts and template elements. """
         name_parts = n[:]
         name_parts[1::2] = map (self.template, name_parts[1::2])
         return "@".join (name_parts)
     def and_elem (self, e):
+        """ Unexpanded : AND elements can be boolean expressions, template AND iterators, or nested OR expression. """
         if e.expr is not None: return self.bool_expr (e.expr)
         if e.template is not None: return "{} (&& {})".format (
                 self.template_decl (e.template.decl), self.and_expr (e.template.expr))
         if e.or_expr is not None: return "({})".format (self.or_expr (e.or_expr))
     def or_elem (self, e):
+        """ Unexpanded : OR elements can be AND expressions, or template OR iterators. """
         if e.expr is not None: return self.and_expr (e.expr)
         if e.template is not None: return "{} (|| {})".format (
                 self.template_decl (e.template.decl), self.and_expr (e.template.expr))
 
 class ExpandedExprPrinter (CommonExprPrinter):
-    """ Collections of str(expr) functions for an expanded ast """
+    """
+    Collections of printer functions for expression AST nodes after expansion (without template statements).
+    These functions complete the ones in CommonExprPrinter to support all expanded AST expressions.
+    """
     def name (self, n):
+        """ Expanded : names are simple strings. """
         return n
     def and_elem (self, e):
+        """ Expanded : AND elements are inline boolean expressions. """
         return self.bool_expr (e)
     def or_elem (self, e):
+        """ Expanded : OR elements are inline AND expressions (list of AND elements). """
         return self.and_expr (e)
 
 class ExpandedAstPrinter (ExpandedExprPrinter):
-    """ Printer for expanded AST """
+    """
+    Complete printer for expanded AST.
+    """
     def write (self, stream, ast):
+        """
+        Print string representation of expanded AST ast in stream file-like object.
+        Relies in ExpandedExprPrinter functions, but is a single big function (not modular).
+        """
         def line (fmt, *args):
             stream.write (fmt.format (*args) + "\n")
         def line_proc_expr_construct (s, name):
+            """ Common printer for init, unsafe, invariant constructs (they have a similar structure). """
             line ("{} ({}) {{ {} }}", name, " ".join (s.procs), self.or_expr (s.expr))
 
         if ast.size_proc is not None:
